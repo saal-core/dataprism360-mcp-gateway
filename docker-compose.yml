@@ -140,6 +140,9 @@ services:
     environment:
       # Domain for CORS/cookies (nginx default at http://localhost:8080)
       - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
+      # Outbound query-param auth for gateway peers
+      - INSECURE_ALLOW_QUERYPARAM_AUTH=${INSECURE_ALLOW_QUERYPARAM_AUTH:-false}
+      - INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS=${INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS:-[]}
       # Bind address - must be 0.0.0.0 inside Docker or other containers cannot connect
       - HOST=${GATEWAY_HOST:-0.0.0.0}
       # Transport: sse, streamablehttp, http, or all (default: all)
@@ -424,6 +427,9 @@ services:
       # - LOOPBACK_CLIENT_KEY=/app/certs/client/client-key.pem
       # Uncomment to enable plugins
       - PLUGINS_ENABLED=true
+      - PLUGINS_CAN_OVERRIDE_RBAC=true
+      # Policy Manager OPA for UnifiedPDPPlugin (plugins/config.yaml)
+      - POLICY_MANAGER_OPA_URL=${POLICY_MANAGER_OPA_URL}
       - PLUGINS_CONFIG_FILE=${PLUGINS_CONFIG_FILE:-plugins/config.yaml}
       - PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=${PLUGINS_CAN_OVERRIDE_AUTH_HEADERS:-false}
       - PRIMARY_WORKER_ELECTION_BACKEND=${PRIMARY_WORKER_ELECTION_BACKEND:-filelock} # filelock (per host) or redis (per cluster)

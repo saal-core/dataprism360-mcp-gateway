@@ -734,6 +734,7 @@ async def check_permission_inline(
     db: Optional[Session] = None,
     request: Optional[Request] = None,
     allow_admin_bypass: bool = True,
+    resource_id: Optional[str] = None,
 ) -> bool:
     """Check a permission without raising, for additive in-handler checks.
 
@@ -754,6 +755,8 @@ async def check_permission_inline(
         db: Optional existing session; a fresh session is opened when omitted.
         request: Optional request, used only to derive plugin content-type context.
         allow_admin_bypass: If True, platform admins bypass the RBAC check.
+        resource_id: Optional id of the server or gateway the check is for. Plugins read it
+            from ``global_context.metadata["resource_id"]``.
 
     Returns:
         bool: True when the permission is granted, False otherwise.
@@ -815,6 +818,9 @@ async def check_permission_inline(
                 tenant_id=None,
                 content_type=content_type,
             )
+
+        # The payload names only the permission; access-control plugins also need the server or gateway it is for.
+        global_context.metadata["resource_id"] = resource_id
 
         # Invoke permission check hook, passing plugin contexts from HTTP_PRE_REQUEST hook
         result, _ = await plugin_manager.invoke_hook(
@@ -1000,6 +1006,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 db=kwargs.get("db") or user_context.get("db"),
                 request=kwargs.get("request"),
                 allow_admin_bypass=allow_admin_bypass,
+                resource_id=kwargs.get("server_id") or kwargs.get("gateway_id"),
             )
 
             if not granted:

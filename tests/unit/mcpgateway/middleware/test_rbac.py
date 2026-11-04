@@ -1276,6 +1276,41 @@ async def test_require_permission_plugin_hook_denies(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("route_kwargs", "expected"),
+    [({"server_id": "vs-1"}, "vs-1"), ({"gateway_id": "gw-1"}, "gw-1"), ({}, None)],
+)
+async def test_require_permission_passes_the_resource_id_to_the_plugin_hook(route_kwargs, expected):
+    """The plugin sees which server or gateway a check is for; a stale id from an earlier check is cleared."""
+    # Third-Party
+    from cpex.framework import GlobalContext
+
+    async def dummy_func(user=None, **kwargs):
+        return "ok"
+
+    global_ctx = GlobalContext(request_id="r1", metadata={"resource_id": "stale"})
+    seen = {}
+
+    async def invoke_hook(hook_type, payload, global_context, **kwargs):
+        seen["resource_id"] = global_context.metadata.get("resource_id")
+        result = MagicMock()
+        result.modified_payload.granted = False
+        return (result, None)
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(side_effect=invoke_hook)
+    mock_user = {"email": "user@test.com", "db": MagicMock(), "plugin_context_table": None, "plugin_global_context": global_ctx}
+
+    with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
+        decorated = rbac.require_permission("servers.update")(dummy_func)
+        with pytest.raises(HTTPException):
+            await decorated(user=mock_user, **route_kwargs)
+
+    assert seen["resource_id"] == expected
+
+
+@pytest.mark.asyncio
 async def test_require_permission_plugin_hook_denies_even_with_override_enabled(monkeypatch):
     """Plugin deny must stay enforced even when grant-override mode is enabled."""
 

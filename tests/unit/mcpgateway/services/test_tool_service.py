@@ -5483,6 +5483,52 @@ class TestToolService:
         # Verify result
         assert result.content[0].text == '{\n  "result": "original response"\n}'
 
+    @pytest.mark.parametrize("server_id", ["vs-1", None])
+    async def test_invoke_tool_adds_virtual_server_to_plugin_metadata(self, tool_service, mock_tool, mock_global_config_obj, test_db, server_id):
+        """The virtual server a tool is called through is added to the plugin metadata; server_id stays the gateway."""
+        # Third-Party
+        from cpex.framework import GlobalContext, ToolHookType
+        from cpex.framework.models import PluginResult
+
+        mock_tool.gateway_id = "gw-1"
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+        # A context reused from an earlier call through another virtual server must not keep its id.
+        context = GlobalContext(request_id="session-id", server_id="gw-1", metadata={"virtual_server_id": "stale-vs"})
+        seen = {}
+
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                seen["server_id"] = global_context.server_id
+                seen["virtual_server_id"] = global_context.metadata.get("virtual_server_id")
+                return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=None, retry_delay_ms=0), None)
+
+        mock_pm = Mock()
+        mock_pm.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
+        resolve_unscoped = tool_service._resolve_tool_for_invocation
+
+        async def resolve_without_server_scope(db, name, headers, email, teams, _server_id, *args, **kwargs):
+            # The virtual server's membership check is not under test here.
+            return await resolve_unscoped(db, name, headers, email, teams, None, *args, **kwargs)
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+            patch.object(tool_service, "_resolve_tool_for_invocation", side_effect=resolve_without_server_scope),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None, server_id=server_id, plugin_global_context=context)
+
+        assert seen == {"server_id": "gw-1", "virtual_server_id": server_id}
+
     async def test_invoke_tool_pre_invoke_hook_receives_trace_extensions(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """G0: TOOL_PRE_INVOKE (and POST_INVOKE) invoke_hook() calls must receive a CPEX
         Extensions object carrying the active trace_id/span_id from the observability

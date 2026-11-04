@@ -1265,15 +1265,19 @@ plugins:
     description: "Unified Policy Decision Point for access control across multiple policy engines"
     version: "0.1.0"
     author: "yiannis2804"
-    hooks: ["tool_pre_invoke", "resource_pre_fetch"]
+    # http_auth_check_permission: management permissions (servers.create,
+    # gateways.update, ...) are decided by the engines too. A grant replaces
+    # ContextForge's RBAC only with PLUGINS_CAN_OVERRIDE_RBAC=true.
+    hooks: ["tool_pre_invoke", "resource_pre_fetch", "http_auth_check_permission"]
     tags: ["security", "policy", "access-control", "pdp", "rbac", "mac"]
-    mode: "disabled"  # set to "sequential" to activate
+    mode: "sequential"  # set to "disabled" to deactivate
+    on_error: "fail"
     priority: 10  # Run early — access control before other plugins
     conditions: []
     config:
       engines:
         - name: native
-          enabled: true
+          enabled: false
           priority: 1
           settings:
             rules_file: "plugins/unified_pdp/default_rules.json"
@@ -1282,12 +1286,15 @@ plugins:
           priority: 2
           settings:
             relaxed_star: false
+        # DataPrism Policy Manager's OPA (opal-client); its contextforge package
+        # accepts this plugin's input (subject.email, tools.invoke.<tool>,
+        # permission_check with the permission as action).
         - name: opa
-          enabled: false
+          enabled: true
           priority: 3
           settings:
-            opa_url: "http://localhost:8181"
-            policy_path: "mcpgateway"
+            opa_url: '{{ env.POLICY_MANAGER_OPA_URL }}'
+            policy_path: "contextforge"
             timeout_ms: 5000
             max_retries: 3
         - name: cedar

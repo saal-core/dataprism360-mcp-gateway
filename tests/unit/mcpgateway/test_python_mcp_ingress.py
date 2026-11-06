@@ -158,12 +158,12 @@ async def test_real_affinity_dispatch_keeps_a_non_object_structured_result(monke
 
 
 @pytest.mark.asyncio
-async def test_real_affinity_dispatch_enforces_rbac(monkeypatch, affinity_application):
-    """RBAC denial stops execution even when token permissions allow tools.execute."""
+async def test_real_affinity_dispatch_enforces_policy_manager(monkeypatch, affinity_application):
+    """A Policy Manager denial stops execution even when token permissions allow tools.execute."""
     execute = AsyncMock()
     monkeypatch.setattr(main, "_execute_rpc_tools_call", execute)
     checker = AsyncMock(return_value=False)
-    monkeypatch.setattr(main.PermissionChecker, "has_permission", checker)
+    monkeypatch.setattr(main, "plugin_permission_decision", checker)
     response = await post_rpc_in_process(
         content=orjson.dumps({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "protected"}, "id": 1}),
         headers={"x-forwarded-internally": "true"},

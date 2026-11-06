@@ -146,6 +146,30 @@ class GatewayHandle:
     workdir: str
 
 
+# The gateway decides /rpc and /mcp permissions only through an
+# HTTP_AUTH_CHECK_PERMISSION plugin (Policy Manager) and denies without one.
+# This module stands in for Policy Manager and allows every permission, so the
+# protocol behaviour under test is reachable. It is written into the gateway
+# workdir, which is on sys.path for ``python -m uvicorn``.
+_ALLOW_ALL_PERMISSION_PLUGIN = """
+from cpex.framework import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResult, HttpAuthCheckPermissionResultPayload, Plugin, PluginContext
+
+
+class AllowAllPermissionPlugin(Plugin):
+    async def http_auth_check_permission(self, payload: HttpAuthCheckPermissionPayload, context: PluginContext) -> HttpAuthCheckPermissionResult:
+        return HttpAuthCheckPermissionResult(modified_payload=HttpAuthCheckPermissionResultPayload(granted=True, reason="e2e: allow all"))
+"""
+
+_ALLOW_ALL_PERMISSION_PLUGIN_CONFIG = """
+plugins:
+  - name: "AllowAllPermissionPlugin"
+    kind: "e2e_allow_all_permission.AllowAllPermissionPlugin"
+    hooks: ["http_auth_check_permission"]
+    mode: "sequential"
+    priority: 10
+"""
+
+
 def _gateway_env(db_path: str, mode: str) -> dict[str, str]:
     """Curated environment for the source-run gateway (no .env leakage)."""
     env = {
@@ -164,7 +188,9 @@ def _gateway_env(db_path: str, mode: str) -> dict[str, str]:
         "REQUIRE_JTI": "false",
         "MCPGATEWAY_UI_ENABLED": "false",
         "MCPGATEWAY_ADMIN_API_ENABLED": "true",
-        "PLUGINS_ENABLED": "false",
+        "PLUGINS_ENABLED": "true",
+        "PLUGINS_CONFIG_FILE": os.path.join(os.path.dirname(db_path), "plugins.yaml"),
+        "PLUGINS_CAN_OVERRIDE_RBAC": "true",
         "OBSERVABILITY_ENABLED": "false",
         "CACHE_TYPE": "memory",
         "LOG_LEVEL": "WARNING",
@@ -201,6 +227,10 @@ def _launch_gateway(mode: str, port: int) -> GatewayHandle:
     """Launch ``uvicorn mcpgateway.main:app`` from the worktree venv."""
     workdir = tempfile.mkdtemp(prefix=f"mcp-e2e-connect-{mode}-")
     db_path = os.path.join(workdir, "mcp.db")
+    with open(os.path.join(workdir, "e2e_allow_all_permission.py"), "w", encoding="utf-8") as plugin_file:
+        plugin_file.write(_ALLOW_ALL_PERMISSION_PLUGIN)
+    with open(os.path.join(workdir, "plugins.yaml"), "w", encoding="utf-8") as config_file:
+        config_file.write(_ALLOW_ALL_PERMISSION_PLUGIN_CONFIG)
     log_file = open(os.path.join(workdir, "gateway.log"), "w", encoding="utf-8")  # noqa: SIM115
     handle = GatewayHandle(
         mode=mode,

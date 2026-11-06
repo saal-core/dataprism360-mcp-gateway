@@ -195,6 +195,23 @@ def resolve_test_db_url():
     raise ValueError(f"Unsupported test DB type: {db}")
 
 
+@pytest.fixture(autouse=True)
+def policy_manager_decision(monkeypatch):
+    """Auto-mock the Policy Manager (plugin) decision of the /rpc and Streamable HTTP checks.
+
+    Those checks fail closed without a plugin decision, so tests get an allowing
+    Policy Manager by default. Tests of denial set ``return_value`` to ``False``
+    (plugin denies) or ``None`` (no plugin decision). Only modules already imported
+    by the test are patched, so tests that never load them do not import them.
+    """
+    decision = AsyncMock(return_value=True)
+    for module_name in ("mcpgateway.main", "mcpgateway.transports.streamablehttp_transport"):
+        module = sys.modules.get(module_name)
+        if module is not None:
+            monkeypatch.setattr(module, "plugin_permission_decision", decision)
+    return decision
+
+
 @pytest.fixture(scope="session")
 def test_db_url():
     return resolve_test_db_url()

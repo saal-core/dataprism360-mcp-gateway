@@ -75,7 +75,7 @@ from mcpgateway.db import server_prompt_association, server_resource_association
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import SessionLocal
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, plugin_permission_decision
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
 from mcpgateway.services.completion_service import CompletionError, CompletionService, completion_error_code
 from mcpgateway.services.logging_service import LoggingService
@@ -1234,7 +1234,10 @@ async def _check_streamable_permission(
     allow_admin_bypass: bool = True,
     check_any_team: bool = False,
 ) -> bool:
-    """Evaluate RBAC permission for a Streamable HTTP request context.
+    """Evaluate a permission for a Streamable HTTP request context.
+
+    The ``HTTP_AUTH_CHECK_PERMISSION`` plugin decision counts first, as for
+    ``@require_permission``; RBAC decides when no plugin does.
 
     Args:
         user_context: Authenticated user context from Streamable HTTP middleware.
@@ -1250,6 +1253,11 @@ async def _check_streamable_permission(
         return False
 
     try:
+        granted = await plugin_permission_decision(user_context, permission)
+        if granted is not None:
+            if not granted:
+                logger.warning("Streamable HTTP permission denied by plugin: user=%s, permission=%s", user_email, permission)
+            return granted
         async with get_db() as db:
             permission_service = PermissionService(db)
             granted = await permission_service.check_permission(

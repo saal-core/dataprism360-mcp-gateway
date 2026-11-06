@@ -112,7 +112,7 @@ from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, check_permission_inline, get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, check_permission_inline, get_current_user_with_permissions, PermissionChecker, plugin_permission_decision, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
@@ -850,7 +850,8 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
 
     Enforces both layers:
     1. Token scopes.permissions cap (if explicit permissions present)
-    2. RBAC role-based permission check
+    2. The ``HTTP_AUTH_CHECK_PERMISSION`` plugin decision, as for ``@require_permission``;
+       the RBAC role-based permission check when no plugin decides
 
     Args:
         user: Authenticated user context.
@@ -894,9 +895,13 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
         team_id = user.get("team_id")
         if not team_id:
             check_any_team = True
-    checker = PermissionChecker(_build_rpc_permission_user(user, db))
-    if not await checker.has_permission(permission, check_any_team=check_any_team, team_id=team_id):
-        logger.warning("RPC permission denied (RBAC): method=%s, required=%s", method, permission)
+    permission_user = _build_rpc_permission_user(user, db)
+    granted = await plugin_permission_decision(permission_user, permission, team_id=team_id, request=request)
+    decided_by_rbac = granted is None
+    if decided_by_rbac:
+        granted = await PermissionChecker(permission_user).has_permission(permission, check_any_team=check_any_team, team_id=team_id)
+    if not granted:
+        logger.warning("RPC permission denied (%s): method=%s, required=%s", "RBAC" if decided_by_rbac else "plugin", method, permission)
         raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
 

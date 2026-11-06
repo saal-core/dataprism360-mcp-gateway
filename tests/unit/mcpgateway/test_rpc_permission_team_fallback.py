@@ -235,3 +235,36 @@ async def test_ensure_rpc_permission_token_scope_cap_blocks_at_layer1():
 
     assert exc_info.value.code == -32003
     assert "Access denied" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("plugin_grants", [True, False])
+async def test_ensure_rpc_permission_follows_the_plugin_decision_over_rbac(plugin_grants):
+    """An HTTP_AUTH_CHECK_PERMISSION plugin decision replaces RBAC, as it does for @require_permission."""
+    user = _make_session_user()
+    db = MagicMock(spec=Session)
+    mock_checker = _make_mock_checker(grants=not plugin_grants)
+
+    with patch("mcpgateway.main.plugin_permission_decision", AsyncMock(return_value=plugin_grants)), patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
+        if plugin_grants:
+            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
+        else:
+            with pytest.raises(JSONRPCError) as exc_info:
+                await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
+            assert exc_info.value.code == -32003
+
+    mock_checker.has_permission.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ensure_rpc_permission_uses_rbac_when_no_plugin_decides():
+    """Without a plugin decision, RBAC still denies a caller without the permission."""
+    user = _make_session_user()
+    db = MagicMock(spec=Session)
+    mock_checker = _make_mock_checker(grants=False)
+
+    with patch("mcpgateway.main.plugin_permission_decision", AsyncMock(return_value=None)), patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
+        with pytest.raises(JSONRPCError):
+            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
+
+    mock_checker.has_permission.assert_called_once()

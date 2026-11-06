@@ -237,3 +237,41 @@ async def test_call_tool_raises_permission_error_when_session_token_denied():
                 ):
                     with pytest.raises(PermissionError, match="Access denied"):
                         await call_tool("some_tool", {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("plugin_grants", [True, False])
+async def test_check_streamable_permission_follows_the_plugin_decision_over_rbac(plugin_grants):
+    """An HTTP_AUTH_CHECK_PERMISSION plugin decision replaces RBAC, as it does for @require_permission."""
+    mock_ps = MagicMock()
+    mock_ps.check_permission = AsyncMock(return_value=not plugin_grants)
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.plugin_permission_decision", AsyncMock(return_value=plugin_grants)),
+        patch("mcpgateway.transports.streamablehttp_transport.PermissionService", return_value=mock_ps),
+    ):
+        result = await _check_streamable_permission(user_context=_make_user_ctx(), permission="tools.execute")
+
+    assert result is plugin_grants
+    mock_ps.check_permission.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_streamable_permission_uses_rbac_when_no_plugin_decides():
+    """Without a plugin decision, RBAC still denies a caller without the permission."""
+    mock_ps = MagicMock()
+    mock_ps.check_permission = AsyncMock(return_value=False)
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.plugin_permission_decision", AsyncMock(return_value=None)),
+        patch("mcpgateway.transports.streamablehttp_transport.PermissionService", return_value=mock_ps),
+        patch("mcpgateway.transports.streamablehttp_transport.get_db") as mock_get_db,
+    ):
+        mock_db_ctx = MagicMock()
+        mock_db_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_db_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_get_db.return_value = mock_db_ctx
+        result = await _check_streamable_permission(user_context=_make_user_ctx(), permission="tools.execute")
+
+    assert result is False
+    mock_ps.check_permission.assert_called_once()

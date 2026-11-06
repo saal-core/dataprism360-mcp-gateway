@@ -107,11 +107,13 @@ catalog_servers:
     description: "Version control and collaborative software development"
     requires_api_key: false
     tags: ["development", "git", "version-control", "collaboration"]
-    # GitHub publishes no OAuth authorization-server discovery document (its
-    # OAuth Apps flow predates RFC 8414), so seeding matters most here: these
-    # are GitHub's fixed, long-stable OAuth App endpoints.
+    # GitHub's issuer is https://github.com/login/oauth: its RFC 8414 metadata
+    # (https://github.com/.well-known/oauth-authorization-server/login/oauth)
+    # names it, and its authorization responses carry it as iss (RFC 9207), which
+    # must equal the configured issuer. These are GitHub's fixed, long-stable
+    # OAuth App endpoints.
     oauth:
-      issuer: "https://github.com"
+      issuer: "https://github.com/login/oauth"
       authorization_url: "https://github.com/login/oauth/authorize"
       token_url: "https://github.com/login/oauth/access_token"
       scopes: ["repo", "delete_repo", "read:org", "admin:org", "read:enterprise", "admin:enterprise", "read:user", "user:email", "read:packages", "write:packages", "read:project", "project", "gist", "notifications", "workflow", "codespace"]

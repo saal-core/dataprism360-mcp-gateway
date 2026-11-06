@@ -3,13 +3,12 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Regression tests for session-token team-permission fallback in the /mcp transport.
-Ref: https://github.com/IBM/mcp-context-forge/issues/3515
+Tests for the Streamable HTTP (/mcp) method permission check, _check_streamable_permission.
 
-These tests assert that _check_streamable_permission is called with check_any_team=True
-for session tokens, which requires the call_tool handler to detect token_use="session"
-from user_context and pass it through. Before the fix (Task 5), token_use is not stored
-in auth_user_ctx, so check_any_team is never True.
+Policy Manager decides every /mcp method permission through the
+HTTP_AUTH_CHECK_PERMISSION plugin. The check fails closed: a plugin denial,
+no plugin decision, a plugin error and a missing user email all deny, and RBAC
+never decides.
 """
 
 # Standard
@@ -37,99 +36,52 @@ def _make_user_ctx(token_use: str = "session", teams=None) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_check_streamable_permission_session_token_passes_check_any_team_true():
-    """_check_streamable_permission must forward check_any_team=True for session tokens.
+async def test_check_streamable_permission_grants_when_policy_manager_allows(policy_manager_decision):
+    """A plugin grant allows the permission; the plugin gets the user and the permission."""
+    user_ctx = _make_user_ctx()
 
-    This test verifies the contract at the PermissionService level.
-    The call_tool handler (Task 5) is responsible for detecting session tokens
-    and passing check_any_team=True into _check_streamable_permission.
-    Here we confirm the function correctly threads check_any_team through.
-    """
-    user_ctx = _make_user_ctx(token_use="session")
-    mock_ps = MagicMock()
-    mock_ps.check_permission = AsyncMock(return_value=True)
+    assert await _check_streamable_permission(user_context=user_ctx, permission="tools.execute") is True
 
-    with patch("mcpgateway.transports.streamablehttp_transport.PermissionService", return_value=mock_ps):
-        with patch("mcpgateway.transports.streamablehttp_transport.get_db") as mock_get_db:
-            mock_db_ctx = MagicMock()
-            mock_db_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
-            mock_db_ctx.__aexit__ = AsyncMock(return_value=False)
-            mock_get_db.return_value = mock_db_ctx
-
-            result = await _check_streamable_permission(
-                user_context=user_ctx,
-                permission="tools.execute",
-                check_any_team=True,  # call site (Task 5) will pass this for session tokens
-            )
-
-    assert result is True
-    mock_ps.check_permission.assert_called_once()
-    call_kwargs = mock_ps.check_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is True, "Expected check_any_team=True to be threaded through to PermissionService"
+    policy_manager_decision.assert_awaited_once_with(user_ctx, "tools.execute")
 
 
 @pytest.mark.asyncio
-async def test_check_streamable_permission_api_token_check_any_team_true():
-    """API tokens in MCP transport must use check_any_team=True (no team_id available).
+@pytest.mark.parametrize("decision", [False, None], ids=["plugin_denies", "no_plugin_decision"])
+async def test_check_streamable_permission_denies_without_a_policy_manager_grant(policy_manager_decision, decision):
+    """A plugin denial and no plugin decision both deny."""
+    policy_manager_decision.return_value = decision
 
-    The MCP transport has no route-level team_id, so callers must pass
-    check_any_team=True for all token types (both session and API).
-    Layer 1 (token scope cap) already restricts what the token can do.
-    """
-    user_ctx = _make_user_ctx(token_use="api")
-    mock_ps = MagicMock()
-    mock_ps.check_permission = AsyncMock(return_value=True)
-
-    with patch("mcpgateway.transports.streamablehttp_transport.PermissionService", return_value=mock_ps):
-        with patch("mcpgateway.transports.streamablehttp_transport.get_db") as mock_get_db:
-            mock_db_ctx = MagicMock()
-            mock_db_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
-            mock_db_ctx.__aexit__ = AsyncMock(return_value=False)
-            mock_get_db.return_value = mock_db_ctx
-
-            await _check_streamable_permission(
-                user_context=user_ctx,
-                permission="tools.execute",
-                check_any_team=True,  # MCP transport: always True (no team_id)
-            )
-
-    call_kwargs = mock_ps.check_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is True
+    assert await _check_streamable_permission(user_context=_make_user_ctx(), permission="tools.execute") is False
 
 
 @pytest.mark.asyncio
-async def test_check_streamable_permission_no_token_use_defaults_false():
-    """user_context without token_use (older format) must default check_any_team=False."""
-    user_ctx = _make_user_ctx(token_use=None)  # no token_use key
-    mock_ps = MagicMock()
-    mock_ps.check_permission = AsyncMock(return_value=True)
+async def test_check_streamable_permission_denies_admins_without_a_grant(policy_manager_decision):
+    """Platform admins are decided by the plugin too."""
+    policy_manager_decision.return_value = False
+    admin_ctx = {**_make_user_ctx(), "is_admin": True, "teams": None}
 
-    with patch("mcpgateway.transports.streamablehttp_transport.PermissionService", return_value=mock_ps):
-        with patch("mcpgateway.transports.streamablehttp_transport.get_db") as mock_get_db:
-            mock_db_ctx = MagicMock()
-            mock_db_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
-            mock_db_ctx.__aexit__ = AsyncMock(return_value=False)
-            mock_get_db.return_value = mock_db_ctx
-
-            await _check_streamable_permission(
-                user_context=user_ctx,
-                permission="tools.execute",
-                check_any_team=False,  # no token_use → False
-            )
-
-    call_kwargs = mock_ps.check_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team", False) is False
+    assert await _check_streamable_permission(user_context=admin_ctx, permission="admin.system_config") is False
 
 
 @pytest.mark.asyncio
-async def test_servers_use_check_passes_check_any_team_for_session_token():
-    """servers.use in handle_streamable_http must pass check_any_team=True for session tokens.
+async def test_check_streamable_permission_denies_on_plugin_error(policy_manager_decision):
+    """A plugin error (for example OPA unreachable) denies."""
+    policy_manager_decision.side_effect = RuntimeError("OPA unreachable")
 
-    The servers.use check at the ASGI handler level gates access to /servers/{id}/mcp.
-    Since developer and team_admin roles grant servers.use as a team-scoped permission,
-    session tokens must use check_any_team=True — otherwise they are denied at the
-    transport level before even reaching call_tool.
-    """
+    assert await _check_streamable_permission(user_context=_make_user_ctx(), permission="tools.execute") is False
+
+
+@pytest.mark.asyncio
+async def test_check_streamable_permission_denies_a_user_without_email(policy_manager_decision):
+    """A context with no user email is denied before the plugin is asked."""
+    assert await _check_streamable_permission(user_context={"is_authenticated": True}, permission="tools.execute") is False
+
+    policy_manager_decision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_servers_use_check_runs_for_server_scoped_route():
+    """handle_streamable_http checks servers.use before it serves /servers/{id}/mcp."""
     # Third-Party
     import orjson
 
@@ -190,11 +142,8 @@ async def test_servers_use_check_passes_check_any_team_for_session_token():
 
                     await wrapper.handle_streamable_http(scope, receive, send)
 
-                    # Verify _check_streamable_permission was called with check_any_team=True
                     mock_perm.assert_called_once()
-                    call_kwargs = mock_perm.call_args.kwargs
-                    assert call_kwargs.get("check_any_team") is True, f"servers.use check must pass check_any_team=True for session tokens; got {call_kwargs}"
-                    assert call_kwargs.get("permission") == "servers.use"
+                    assert mock_perm.call_args.kwargs == {"user_context": session_user_ctx, "permission": "servers.use"}
             finally:
                 user_context_var.reset(token)
                 await wrapper.shutdown()
@@ -204,9 +153,8 @@ async def test_servers_use_check_passes_check_any_team_for_session_token():
 async def test_call_tool_raises_permission_error_when_session_token_denied():
     """call_tool must raise PermissionError when _check_streamable_permission returns False.
 
-    Deny-path regression test: even with check_any_team=True for a session token,
-    if PermissionService denies the request, call_tool must raise PermissionError
-    and not proceed to tool execution.
+    Deny-path regression test: when Policy Manager denies the request, call_tool
+    must raise PermissionError and not proceed to tool execution.
     """
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool
@@ -237,41 +185,3 @@ async def test_call_tool_raises_permission_error_when_session_token_denied():
                 ):
                     with pytest.raises(PermissionError, match="Access denied"):
                         await call_tool("some_tool", {})
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("plugin_grants", [True, False])
-async def test_check_streamable_permission_follows_the_plugin_decision_over_rbac(plugin_grants):
-    """An HTTP_AUTH_CHECK_PERMISSION plugin decision replaces RBAC, as it does for @require_permission."""
-    mock_ps = MagicMock()
-    mock_ps.check_permission = AsyncMock(return_value=not plugin_grants)
-
-    with (
-        patch("mcpgateway.transports.streamablehttp_transport.plugin_permission_decision", AsyncMock(return_value=plugin_grants)),
-        patch("mcpgateway.transports.streamablehttp_transport.PermissionService", return_value=mock_ps),
-    ):
-        result = await _check_streamable_permission(user_context=_make_user_ctx(), permission="tools.execute")
-
-    assert result is plugin_grants
-    mock_ps.check_permission.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_check_streamable_permission_uses_rbac_when_no_plugin_decides():
-    """Without a plugin decision, RBAC still denies a caller without the permission."""
-    mock_ps = MagicMock()
-    mock_ps.check_permission = AsyncMock(return_value=False)
-
-    with (
-        patch("mcpgateway.transports.streamablehttp_transport.plugin_permission_decision", AsyncMock(return_value=None)),
-        patch("mcpgateway.transports.streamablehttp_transport.PermissionService", return_value=mock_ps),
-        patch("mcpgateway.transports.streamablehttp_transport.get_db") as mock_get_db,
-    ):
-        mock_db_ctx = MagicMock()
-        mock_db_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
-        mock_db_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_get_db.return_value = mock_db_ctx
-        result = await _check_streamable_permission(user_context=_make_user_ctx(), permission="tools.execute")
-
-    assert result is False
-    mock_ps.check_permission.assert_called_once()

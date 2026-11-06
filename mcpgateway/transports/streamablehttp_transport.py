@@ -95,7 +95,6 @@ from mcpgateway.services.metrics import (
     transport_get_rejected_counter,
 )
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
-from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceUpstreamError, set_upstream_cache_directive, upstream_read_cache_var
 from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
@@ -1231,22 +1230,19 @@ async def _check_streamable_permission(
     *,
     user_context: dict[str, Any],
     permission: str,
-    allow_admin_bypass: bool = True,
-    check_any_team: bool = False,
 ) -> bool:
     """Evaluate a permission for a Streamable HTTP request context.
 
-    The ``HTTP_AUTH_CHECK_PERMISSION`` plugin decision counts first, as for
-    ``@require_permission``; RBAC decides when no plugin does.
+    Policy Manager decides through the ``HTTP_AUTH_CHECK_PERMISSION`` plugin. The check
+    fails closed: with no plugin decision, or a plugin error, the permission is denied
+    and never left to RBAC.
 
     Args:
         user_context: Authenticated user context from Streamable HTTP middleware.
         permission: Permission name to evaluate (for example ``tools.execute``).
-        allow_admin_bypass: Whether unrestricted admin tokens can bypass team checks.
-        check_any_team: Whether any matching team grants permission.
 
     Returns:
-        bool: ``True`` when the caller is authorized for ``permission``.
+        bool: ``True`` only when the plugin grants ``permission``.
     """
     user_email = user_context.get("email")
     if not user_email:
@@ -1254,25 +1250,13 @@ async def _check_streamable_permission(
 
     try:
         granted = await plugin_permission_decision(user_context, permission)
-        if granted is not None:
-            if not granted:
-                logger.warning("Streamable HTTP permission denied by plugin: user=%s, permission=%s", user_email, permission)
-            return granted
-        async with get_db() as db:
-            permission_service = PermissionService(db)
-            granted = await permission_service.check_permission(
-                user_email=user_email,
-                permission=permission,
-                token_teams=user_context.get("teams"),
-                allow_admin_bypass=allow_admin_bypass,
-                check_any_team=check_any_team,
-            )
-            if not granted:
-                logger.warning("Streamable HTTP RBAC denied: user=%s, permission=%s", user_email, permission)
-            return granted
     except Exception as exc:
-        logger.warning("Streamable HTTP RBAC check failed for %s / %s: %s", user_email, permission, exc)
+        logger.warning("Streamable HTTP permission check failed for %s / %s: %s", user_email, permission, exc)
         return False
+    if granted is not True:
+        logger.warning("Streamable HTTP permission denied (%s): user=%s, permission=%s", "no plugin decision" if granted is None else "plugin", user_email, permission)
+        return False
+    return True
 
 
 def _check_scoped_permission(user_context: dict[str, Any], permission: str) -> bool:
@@ -1294,29 +1278,6 @@ def _check_scoped_permission(user_context: dict[str, Any], permission: str) -> b
     if not allowed:
         logger.warning("Streamable HTTP token scope denied: user=%s, required=%s", user_context.get("email"), permission)
     return allowed
-
-
-def _check_any_team_for_server_scoped_rbac(user_context: dict[str, Any] | None, server_id: str | None) -> bool:
-    """Return whether Streamable HTTP RBAC should check across team-scoped roles.
-
-    Server-scoped MCP routes (``/servers/<id>/mcp``) should authorize team-bound
-    callers against the specific virtual server context. Session tokens already do
-    this via ``check_any_team=True`` because they have no single explicit team_id.
-    Team-scoped API tokens need the same treatment on server-scoped routes; otherwise
-    they are evaluated only in global scope and incorrectly denied.
-
-    Args:
-        user_context: Current authenticated MCP user context, if any.
-        server_id: Effective virtual server identifier for the MCP request.
-
-    Returns:
-        ``True`` when RBAC should search across the caller's token teams.
-    """
-    if not user_context:
-        return False
-    if user_context.get("token_use") == "session":
-        return True
-    return bool(server_id) and bool(user_context.get("teams"))
 
 
 def set_shared_session_registry(session_registry: Any) -> None:
@@ -2064,7 +2025,6 @@ async def call_tool(
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
-            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
         if not has_execute_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
@@ -3384,7 +3344,6 @@ async def set_logging_level(_ctx: Any, params: "types.SetLevelRequestParams") ->
         has_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="admin.system_config",
-            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
         if not has_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
@@ -3449,7 +3408,6 @@ async def complete(
         has_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.read",
-            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
         if not has_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
@@ -4954,7 +4912,6 @@ class SessionManagerWrapper:
             has_server_access = await _check_streamable_permission(
                 user_context=user_context,
                 permission="servers.use",
-                check_any_team=_check_any_team_for_server_scoped_rbac(user_context, _server_id),
             )
             if not has_server_access:
                 response = ORJSONResponse(

@@ -1044,15 +1044,9 @@ class TestAppBridgeEndpoints:
                 """Grant only the endpoint-level tools.execute permission."""
                 return kwargs.get("permission") == "tools.execute"
 
-        class DeniesResourcesRead:
-            """RPC permission checker double that denies resources.read."""
-
-            def __init__(self, _user) -> None:
-                pass
-
-            async def has_permission(self, permission, **kwargs) -> bool:
-                """Deny resources.read, grant anything else."""
-                return permission != "resources.read"
+        async def denies_resources_read(_user, permission, **kwargs) -> bool:
+            """Policy Manager double for the RPC check: deny resources.read, grant anything else."""
+            return permission != "resources.read"
 
         route_app = FastAPI()
         route_app.include_router(main_mod.utility_router)
@@ -1062,7 +1056,7 @@ class TestAppBridgeEndpoints:
 
         with (
             patch("mcpgateway.middleware.rbac.PermissionService", GrantsOnlyToolsExecute),
-            patch.object(main_mod, "PermissionChecker", DeniesResourcesRead),
+            patch.object(main_mod, "plugin_permission_decision", denies_resources_read),
             patch.object(main_mod, "_build_rpc_permission_user", return_value={"email": "user@example.com"}),
             patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
             patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),

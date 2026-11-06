@@ -13792,8 +13792,8 @@ async def test_handle_streamable_http_server_scope_rbac_forbidden_on_get(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_handle_streamable_http_server_scope_checks_any_team_for_team_api_token(monkeypatch):
-    """Server-scoped MCP requests should check RBAC across token teams for API tokens."""
+async def test_handle_streamable_http_server_scope_checks_servers_use_for_team_api_token(monkeypatch):
+    """Server-scoped MCP requests check servers.use for API tokens."""
     # Third-Party
     import orjson
 
@@ -13837,25 +13837,9 @@ async def test_handle_streamable_http_server_scope_checks_any_team_for_team_api_
         await wrapper.handle_streamable_http(scope, receive, send)
 
         assert permission_check.await_args.kwargs["permission"] == "servers.use"
-        assert permission_check.await_args.kwargs["check_any_team"] is True
     finally:
         user_context_var.reset(token)
         await wrapper.shutdown()
-
-
-@pytest.mark.parametrize(
-    ("user_context", "server_id", "expected"),
-    [
-        (None, "srv-1", False),
-        ({"token_use": "session", "teams": []}, None, True),
-        ({"token_use": "api", "teams": ["team-1"]}, "srv-1", True),
-        ({"token_use": "api", "teams": []}, "srv-1", False),
-        ({"token_use": "api", "teams": ["team-1"]}, None, False),
-    ],
-)
-def test_check_any_team_for_server_scoped_rbac(user_context, server_id, expected):
-    """Server-scoped RBAC should reuse any-team lookup for session and team API tokens."""
-    assert tr._check_any_team_for_server_scoped_rbac(user_context, server_id) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -15996,15 +15980,9 @@ def test_build_resource_metadata_url_exception_returns_empty():
 
 
 @pytest.mark.asyncio
-async def test_check_streamable_permission_exception_returns_false(monkeypatch):
-    """RBAC check exception should log warning and return False (line 598)."""
-
-    @asynccontextmanager
-    async def exploding_db():
-        raise RuntimeError("DB gone")
-        yield  # required for generator syntax
-
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", exploding_db)
+async def test_check_streamable_permission_exception_returns_false(policy_manager_decision):
+    """A permission check exception should log a warning and return False."""
+    policy_manager_decision.side_effect = RuntimeError("OPA unreachable")
 
     result = await tr._check_streamable_permission(
         user_context={"email": "user@example.com", "teams": ["t1"], "is_admin": False, "is_authenticated": True},
@@ -17214,8 +17192,8 @@ async def test_complete_denied_by_token_scope(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("server_id", [None, "server-1"])
-async def test_complete_denied_by_rbac(monkeypatch, server_id):
-    """Reject completion when token scope permits tools.read but RBAC denies it."""
+async def test_complete_denied_by_policy_manager(monkeypatch, server_id):
+    """Reject completion when token scope permits tools.read but Policy Manager denies it."""
     user_context = _scoped_user_context(["tools.read"])
     monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=(server_id, None, user_context)))
     permission = AsyncMock(return_value=False)
@@ -17229,7 +17207,6 @@ async def test_complete_denied_by_rbac(monkeypatch, server_id):
     permission.assert_awaited_once_with(
         user_context=user_context,
         permission="tools.read",
-        check_any_team=tr._check_any_team_for_server_scoped_rbac(user_context, server_id),
     )
     completion.assert_not_awaited()
 

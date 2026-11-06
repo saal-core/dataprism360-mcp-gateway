@@ -776,14 +776,14 @@ def _normalize_token_teams(teams: Optional[List]) -> List[str]:
 
 
 def _build_rpc_permission_user(user, db: Session) -> dict[str, Any]:
-    """Build PermissionChecker user payload for method-level RPC checks.
+    """Build the user payload for method-level RPC permission checks.
 
     Args:
         user: Authenticated user context.
         db: Active database session.
 
     Returns:
-        Permission checker payload with email and ``db`` keys.
+        Permission payload with email and ``db`` keys.
     """
     permission_user = dict(user) if isinstance(user, dict) else {"email": get_user_email(user)}
     if not permission_user.get("email"):
@@ -824,34 +824,13 @@ def _extract_scoped_permissions(request: Request) -> set[str] | None:
     return set(permissions)
 
 
-def _is_permission_admin_user(user) -> bool:
-    """Return whether the caller already has permission-layer admin authority.
-
-    This is stricter than token-scope admin semantics. It is used only to skip
-    redundant RBAC DB lookups after token scope caps have already been enforced.
-
-    Args:
-        user: Authenticated user object or dict-like payload.
-
-    Returns:
-        ``True`` when the caller already has permission-layer admin authority.
-    """
-    if hasattr(user, "is_admin"):
-        return bool(getattr(user, "is_admin", False))
-    if isinstance(user, dict):
-        if "permission_is_admin" in user:
-            return bool(user.get("permission_is_admin", False))
-        return False
-    return False
-
-
 async def _ensure_rpc_permission(user, db: Session, permission: str, method: str, request: Request | None = None) -> None:
     """Require a specific RPC permission for a method branch.
 
     Enforces both layers:
     1. Token scopes.permissions cap (if explicit permissions present)
-    2. The ``HTTP_AUTH_CHECK_PERMISSION`` plugin decision, as for ``@require_permission``;
-       the RBAC role-based permission check when no plugin decides
+    2. The ``HTTP_AUTH_CHECK_PERMISSION`` plugin decision (Policy Manager); no decision,
+       a plugin error or a missing user email denies
 
     Args:
         user: Authenticated user context.
@@ -880,28 +859,22 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
             logger.warning("RPC permission denied (token scope): method=%s, required=%s", method, permission)
             raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
-    if permission == "admin.system_config" and _is_permission_admin_user(user):
-        return
-
-    # Layer 2: RBAC check
-    # /rpc payloads never carry a resource with an owning team, so we skip
-    # resource/payload derivation (unlike @require_permission).  For single-
-    # team API tokens we extract team_id from the token itself; otherwise
-    # fall back to check_any_team so team-scoped roles are found.
-    # Layer 1 (token scope cap above) already restricts visibility.
-    team_id: str | None = None
-    check_any_team = False
-    if isinstance(user, dict):
-        team_id = user.get("team_id")
-        if not team_id:
-            check_any_team = True
+    # Layer 2: Policy Manager decides through the HTTP_AUTH_CHECK_PERMISSION plugin.
+    # Fail closed: no plugin decision or a plugin error denies; RBAC never decides.
+    # /rpc payloads never carry a resource with an owning team; a single-team API
+    # token still names its team for the plugin.
     permission_user = _build_rpc_permission_user(user, db)
-    granted = await plugin_permission_decision(permission_user, permission, team_id=team_id, request=request)
-    decided_by_rbac = granted is None
-    if decided_by_rbac:
-        granted = await PermissionChecker(permission_user).has_permission(permission, check_any_team=check_any_team, team_id=team_id)
-    if not granted:
-        logger.warning("RPC permission denied (%s): method=%s, required=%s", "RBAC" if decided_by_rbac else "plugin", method, permission)
+    if not permission_user.get("email"):
+        logger.warning("RPC permission denied (no user email): method=%s, required=%s", method, permission)
+        raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
+    team_id = user.get("team_id") if isinstance(user, dict) else None
+    try:
+        granted = await plugin_permission_decision(permission_user, permission, team_id=team_id, request=request)
+    except Exception as exc:
+        logger.warning("RPC permission check failed: method=%s, required=%s: %s", method, permission, exc)
+        granted = False
+    if granted is not True:
+        logger.warning("RPC permission denied (%s): method=%s, required=%s", "no plugin decision" if granted is None else "plugin", method, permission)
         raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
 

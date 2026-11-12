@@ -12,6 +12,10 @@ every call it builds a Subject/Resource/Context from the hook payload,
 calls ``PolicyDecisionPoint.check_access()``, and either passes the
 request through or blocks it with a ``PluginViolation``.
 
+It also hooks into ``http_auth_check_permission``: management permissions
+(``servers.create``, ``gateways.update``, ...) are decided by the same
+engines and returned as ``granted``.
+
 Configuration (inside plugins/config.yaml ``config:`` block)
 ------------------------------------------------------------
 See ``PDPConfig`` in ``pdp_models.py`` for the full schema.  Minimal example::
@@ -39,6 +43,9 @@ import logging
 
 # Third-Party
 from cpex.framework import (
+    HttpAuthCheckPermissionPayload,
+    HttpAuthCheckPermissionResult,
+    HttpAuthCheckPermissionResultPayload,
     Plugin,
     PluginConfig,
     PluginContext,
@@ -84,8 +91,10 @@ class UnifiedPDPPlugin(Plugin):
     ------------
     * ``tool_pre_invoke``      – called before every tool invocation.
     * ``resource_pre_fetch``   – called before every resource read.
+    * ``http_auth_check_permission`` – called on every management permission
+      check; returns the decision as ``granted`` instead of a violation.
 
-    Both follow the same pattern:
+    The first two follow the same pattern:
         1. Extract Subject / Resource / Context from the hook payload.
         2. Call ``self._pdp.check_access()``.
         3. ALLOW → return the payload unmodified (``continue_processing=True``).
@@ -259,13 +268,16 @@ class UnifiedPDPPlugin(Plugin):
         tool_args = payload.args or {}
         classification_level = tool_args.get("classification_level")
 
+        # server: the virtual server the tool was called through, else its gateway; annotations.gateway: always the gateway.
+        metadata = context.global_context.metadata
+        virtual_server_id = metadata.get("virtual_server_id") if isinstance(metadata, dict) else None
         resource = Resource(
             type="tool",
             id=payload.name,
-            server=context.global_context.server_id,
+            server=virtual_server_id or context.global_context.server_id,
             classification_level=classification_level,
             # Pass tool annotations for fine-grained policy checks
-            annotations={"args_keys": list(tool_args.keys())},
+            annotations={"args_keys": list(tool_args.keys()), "gateway": context.global_context.server_id},
         )
 
         pdp_context = Context(
@@ -388,3 +400,68 @@ class UnifiedPDPPlugin(Plugin):
             decision.cached,
         )
         return ResourcePreFetchResult(modified_payload=payload)
+
+    # ------------------------------------------------------------------
+    # Hook: http_auth_check_permission
+    # ------------------------------------------------------------------
+
+    async def http_auth_check_permission(
+        self,
+        payload: HttpAuthCheckPermissionPayload,
+        context: PluginContext,
+    ) -> HttpAuthCheckPermissionResult:
+        """Called on every management permission check (RBAC layer 2).
+
+        The resource is ``permission_check`` with the permission as its id,
+        and the action is the permission (e.g. ``servers.update``).  The
+        server or gateway the check is for, when the route names one, is
+        passed as the ``target`` annotation, so policies can decide per item.
+        The subject comes from the payload: the global context may carry no
+        user at this point.
+
+        Args:
+            payload: The user, the permission and the caller's admin flag.
+            context: Gateway-provided request context; ``metadata["resource_id"]``
+                is the server or gateway id when there is one.
+
+        Returns:
+            An HttpAuthCheckPermissionResult whose ``modified_payload.granted``
+            is the PDP decision.
+        """
+        metadata = context.global_context.metadata
+        target = metadata.get("resource_id") if isinstance(metadata, dict) else None
+
+        subject = Subject(
+            email=payload.user_email,
+            team_id=payload.team_id,
+            attributes={"is_admin": bool(payload.is_admin)},
+        )
+        resource = Resource(
+            type="permission_check",
+            id=payload.permission,
+            annotations={"target": target} if target else {},
+        )
+        pdp_context = Context(
+            ip=payload.client_host,
+            user_agent=payload.user_agent,
+            session_id=context.global_context.request_id,
+        )
+
+        decision = await self._pdp.check_access(subject, payload.permission, resource, pdp_context)
+        granted = decision.decision == Decision.ALLOW
+
+        log = logger.debug if granted else logger.warning
+        log(
+            "PDP %s http_auth_check_permission | permission=%s | target=%s | user=%s | reason=%s",
+            decision.decision.value.upper(),
+            payload.permission,
+            target,
+            payload.user_email,
+            decision.reason,
+        )
+        return HttpAuthCheckPermissionResult(
+            modified_payload=HttpAuthCheckPermissionResultPayload(
+                granted=granted,
+                reason=decision.reason or f"Unified PDP decision: {decision.decision.value}",
+            ),
+        )

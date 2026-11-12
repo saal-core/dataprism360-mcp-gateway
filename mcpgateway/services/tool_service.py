@@ -5606,6 +5606,9 @@ class ToolService(BaseService):
             content_type = request_headers.get("content-type") if request_headers else None
             global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=payload_tenant_id, user=app_user_email, content_type=content_type)
 
+        # server_id stays the upstream gateway; access-control plugins also need the virtual server (None: called directly).
+        global_context.metadata["virtual_server_id"] = server_id
+
         # Per-invocation accumulator for CPEX control-execution telemetry.
         # Declared here (before the try/with block) so it survives into the
         # exception handlers and the finally block for partial pre-deny telemetry.

@@ -734,6 +734,7 @@ async def check_permission_inline(
     db: Optional[Session] = None,
     request: Optional[Request] = None,
     allow_admin_bypass: bool = True,
+    resource_id: Optional[str] = None,
 ) -> bool:
     """Check a permission without raising, for additive in-handler checks.
 
@@ -754,6 +755,8 @@ async def check_permission_inline(
         db: Optional existing session; a fresh session is opened when omitted.
         request: Optional request, used only to derive plugin content-type context.
         allow_admin_bypass: If True, platform admins bypass the RBAC check.
+        resource_id: Optional id of the server or gateway the check is for. Plugins read it
+            from ``global_context.metadata["resource_id"]``.
 
     Returns:
         bool: True when the permission is granted, False otherwise.
@@ -788,7 +791,77 @@ async def check_permission_inline(
         logger.warning(f"API token scope check failed: user={user_context['email']}, permission={permission}, token_scopes={token_scopes}")
         return False
 
-    # First, check if any plugins want to handle permission checking
+    decision = await plugin_permission_decision(user_context, permission, resource_type=resource_type, team_id=team_id, request=request, resource_id=resource_id)
+    if decision is not None:
+        return decision
+
+    # No plugin handled it, fall through to standard RBAC check
+    if db:
+        permission_service = PermissionService(db)
+        granted = await permission_service.check_permission(
+            user_email=user_context["email"],
+            permission=permission,
+            resource_type=resource_type,
+            team_id=team_id,
+            token_teams=user_context.get("token_teams"),
+            ip_address=user_context.get("ip_address"),
+            user_agent=user_context.get("user_agent"),
+            allow_admin_bypass=allow_admin_bypass,
+            check_any_team=check_any_team,
+        )
+    else:
+        # Create fresh db session for permission check
+        with fresh_db_session() as fresh_db:
+            permission_service = PermissionService(fresh_db)
+            granted = await permission_service.check_permission(
+                user_email=user_context["email"],
+                permission=permission,
+                resource_type=resource_type,
+                team_id=team_id,
+                token_teams=user_context.get("token_teams"),
+                ip_address=user_context.get("ip_address"),
+                user_agent=user_context.get("user_agent"),
+                allow_admin_bypass=allow_admin_bypass,
+                check_any_team=check_any_team,
+            )
+
+    return granted
+
+
+async def plugin_permission_decision(
+    user_context: dict,
+    permission: str,
+    *,
+    resource_type: Optional[str] = None,
+    team_id: Optional[str] = None,
+    request: Optional[Request] = None,
+    resource_id: Optional[str] = None,
+) -> Optional[bool]:
+    """Ask the ``HTTP_AUTH_CHECK_PERMISSION`` plugin hooks for a permission decision.
+
+    The first step of :func:`check_permission_inline`, for permission checks that run their
+    own RBAC step (the ``/rpc`` and Streamable HTTP method checks). A plugin grant counts only
+    with ``PLUGINS_CAN_OVERRIDE_RBAC=true``; a plugin denial always counts.
+
+    Args:
+        user_context: Authenticated user context dict; must contain ``email``.
+        permission: Permission string to check (e.g. ``"tools.execute"``).
+        resource_type: Optional resource type for resource-specific permissions.
+        team_id: Optional team scope for the check.
+        request: Optional request, used only to derive plugin content-type context.
+        resource_id: Optional id of the server or gateway the check is for. Plugins read it
+            from ``global_context.metadata["resource_id"]``.
+
+    Returns:
+        Optional[bool]: ``True`` or ``False`` when a plugin decided, ``None`` when RBAC decides.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, patch
+        >>> with patch("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None)):
+        ...     asyncio.run(plugin_permission_decision({"email": "u@example.com"}, "tools.execute")) is None
+        True
+    """
     # Third-Party
     from cpex.framework import HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
 
@@ -815,6 +888,9 @@ async def check_permission_inline(
                 tenant_id=None,
                 content_type=content_type,
             )
+
+        # The payload names only the permission; access-control plugins also need the server or gateway it is for.
+        global_context.metadata["resource_id"] = resource_id
 
         # Invoke permission check hook, passing plugin contexts from HTTP_PRE_REQUEST hook
         result, _ = await plugin_manager.invoke_hook(
@@ -885,37 +961,7 @@ async def check_permission_inline(
                 )
                 return False
 
-    # No plugin handled it, fall through to standard RBAC check
-    if db:
-        permission_service = PermissionService(db)
-        granted = await permission_service.check_permission(
-            user_email=user_context["email"],
-            permission=permission,
-            resource_type=resource_type,
-            team_id=team_id,
-            token_teams=user_context.get("token_teams"),
-            ip_address=user_context.get("ip_address"),
-            user_agent=user_context.get("user_agent"),
-            allow_admin_bypass=allow_admin_bypass,
-            check_any_team=check_any_team,
-        )
-    else:
-        # Create fresh db session for permission check
-        with fresh_db_session() as fresh_db:
-            permission_service = PermissionService(fresh_db)
-            granted = await permission_service.check_permission(
-                user_email=user_context["email"],
-                permission=permission,
-                resource_type=resource_type,
-                team_id=team_id,
-                token_teams=user_context.get("token_teams"),
-                ip_address=user_context.get("ip_address"),
-                user_agent=user_context.get("user_agent"),
-                allow_admin_bypass=allow_admin_bypass,
-                check_any_team=check_any_team,
-            )
-
-    return granted
+    return None
 
 
 def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True, global_only: bool = False):
@@ -1000,6 +1046,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 db=kwargs.get("db") or user_context.get("db"),
                 request=kwargs.get("request"),
                 allow_admin_bypass=allow_admin_bypass,
+                resource_id=kwargs.get("server_id") or kwargs.get("gateway_id"),
             )
 
             if not granted:

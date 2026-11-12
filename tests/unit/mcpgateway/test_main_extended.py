@@ -46,7 +46,6 @@ from mcpgateway.main import (
     _enforce_internal_mcp_server_scope,
     _ensure_rpc_permission,
     _extract_scoped_permissions,
-    _is_permission_admin_user,
     _parse_apijsonpath,
     _run_internal_mcp_authentication,
     _serialize_legacy_tool_payloads,
@@ -954,22 +953,21 @@ class TestInternalMcpHelperCoverage:
         request.state._mcp_internal_auth_context = {"scoped_permissions": ["tools.read", "servers.use"]}
         assert _extract_scoped_permissions(request) == {"tools.read", "servers.use"}
 
-    def test_is_permission_admin_user_handles_object_and_dict_inputs(self):
-        """Permission-layer admin helper should handle object, dict, and unknown payloads."""
-        assert _is_permission_admin_user(SimpleNamespace(is_admin=True)) is True
-        assert _is_permission_admin_user({"permission_is_admin": True}) is True
-        assert _is_permission_admin_user({"is_admin": True}) is False
-        assert _is_permission_admin_user("not-a-user") is False
-
     @pytest.mark.asyncio
-    async def test_ensure_rpc_permission_short_circuits_admin_system_config_for_permission_admin(self):
-        """Permission-layer admins should short-circuit admin.system_config after scope enforcement."""
+    async def test_ensure_rpc_permission_asks_policy_manager_for_admin_system_config(self):
+        """Permission-layer admins get no admin.system_config shortcut: Policy Manager decides, RBAC is never asked."""
         request = MagicMock(spec=Request)
         request.headers = {}
         request.state = SimpleNamespace(_jwt_verified_payload=("token", {"scopes": {"permissions": ["admin.system_config"]}}))
+        decision = AsyncMock(return_value=True)
 
-        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC should be skipped"))):
-            await _ensure_rpc_permission({"permission_is_admin": True}, MagicMock(), "admin.system_config", "roots/list", request)
+        with (
+            patch("mcpgateway.main.plugin_permission_decision", new=decision),
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC must not decide"))),
+        ):
+            await _ensure_rpc_permission({"email": "admin@example.com", "permission_is_admin": True}, MagicMock(), "admin.system_config", "roots/list", request)
+
+        assert decision.await_args.args[1] == "admin.system_config"
 
     @pytest.mark.asyncio
     async def test_ensure_rpc_permission_skips_rbac_for_public_only_internal_dispatch(self):
@@ -1002,7 +1000,7 @@ class TestInternalMcpHelperCoverage:
         with (
             patch("mcpgateway.main._extract_scoped_permissions", return_value=None),
             patch("mcpgateway.main._build_rpc_permission_user", return_value=MagicMock()),
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=False)),
         ):
             with pytest.raises(JSONRPCError) as exc:
                 await _ensure_rpc_permission({"email": "u@example.com", "is_admin": False}, MagicMock(), "tools.read", "tools/list", request)
@@ -1021,7 +1019,7 @@ class TestInternalMcpHelperCoverage:
         with (
             patch("mcpgateway.main._extract_scoped_permissions", return_value=None),
             patch("mcpgateway.main._build_rpc_permission_user", return_value=MagicMock()),
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=False)),
         ):
             with pytest.raises(JSONRPCError) as exc:
                 await _ensure_rpc_permission({"email": "u@example.com", "is_admin": False}, MagicMock(), "tools.read", "tools/list", request)
@@ -9027,18 +9025,18 @@ class TestRpcHandling:
         payload = {"jsonrpc": "2.0", "id": "roots-1", "method": "list_roots", "params": {}}
         request = self._make_request(payload)
 
-        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)):
+        with patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=False)):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32003
             assert "Access denied" in result["error"]["message"]
 
-    async def test_handle_rpc_list_roots_short_circuits_permission_admin(self):
+    async def test_handle_rpc_list_roots_for_admin_never_asks_rbac(self):
         payload = {"jsonrpc": "2.0", "id": "roots-admin", "method": "list_roots", "params": {}}
         request = self._make_request(payload)
 
         with (
             patch("mcpgateway.main.root_service.list_roots", new=AsyncMock(return_value=[])),
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC lookup should be skipped for admins"))),
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC must not decide"))),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com", "is_admin": True, "permission_is_admin": True})
 
@@ -9048,7 +9046,7 @@ class TestRpcHandling:
         payload = {"jsonrpc": "2.0", "id": "roots-2", "method": "roots/list", "params": {}}
         request = self._make_request(payload)
 
-        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)):
+        with patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=False)):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32003
 
@@ -9060,7 +9058,7 @@ class TestRpcHandling:
         monkeypatch.setattr("mcpgateway.main.root_service.list_roots", list_roots)
         monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
-        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)):
+        with patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com"})
 
         assert result["error"]["code"] == -32003
@@ -9213,7 +9211,7 @@ class TestRpcHandling:
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", False)
 
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)),
             patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
@@ -9226,7 +9224,7 @@ class TestRpcHandling:
         request.state = MagicMock()
 
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=False)),
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value={"ok": True})) as invoke_tool,
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -9241,7 +9239,7 @@ class TestRpcHandling:
         request.state = MagicMock()
 
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=False)),
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value={"ok": True})) as invoke_tool,
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -9256,7 +9254,7 @@ class TestRpcHandling:
         request.state = MagicMock()
 
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value={"ok": True})) as invoke_tool,
         ):
@@ -9336,7 +9334,7 @@ class TestRpcHandling:
         payload_logging = {"jsonrpc": "2.0", "id": "16", "method": "logging/setLevel", "params": {"level": "info"}}
         request_logging = self._make_request(payload_logging)
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
@@ -9347,7 +9345,7 @@ class TestRpcHandling:
         request_logging = self._make_request(payload_logging)
 
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=False)),
             patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)) as set_level,
         ):
             result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
@@ -9361,7 +9359,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.get_user_email", return_value="fallback@example.com") as get_user_email,
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request_logging, db=MagicMock(), user={"sub": "user@example.com"})
@@ -9505,7 +9503,7 @@ class TestRpcHandling:
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", True)
 
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.cancellation_service.register_run", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"cancelled": True})),
             patch("mcpgateway.main.cancellation_service.unregister_run", new=AsyncMock(return_value=None)),
@@ -9527,7 +9525,7 @@ class TestRpcHandling:
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", True)
 
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.cancellation_service.register_run", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(side_effect=[None, {"cancelled": True}])),
             patch("mcpgateway.main.cancellation_service.unregister_run", new=AsyncMock(return_value=None)),
@@ -9953,7 +9951,7 @@ class TestRpcHandling:
             cancel_callback_holder["cb"] = cancel_callback
 
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.cancellation_service.register_run", new=AsyncMock(side_effect=_capture_register_run)),
             patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"cancelled": False})),
             patch("mcpgateway.main.cancellation_service.unregister_run", new=AsyncMock(return_value=None)),
@@ -13200,7 +13198,7 @@ class TestRpcScopedPermissions:
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert "error" not in result
@@ -13216,7 +13214,7 @@ class TestRpcScopedPermissions:
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert "error" not in result
@@ -13232,7 +13230,7 @@ class TestRpcScopedPermissions:
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert "error" not in result
@@ -13248,7 +13246,7 @@ class TestRpcScopedPermissions:
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert "error" not in result
@@ -13342,7 +13340,7 @@ class TestRpcScopedPermissions:
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert "error" not in result
@@ -13365,7 +13363,7 @@ class TestRpcScopedPermissions:
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
+            patch("mcpgateway.main.plugin_permission_decision", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert "error" not in result

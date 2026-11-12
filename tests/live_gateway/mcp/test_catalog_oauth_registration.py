@@ -57,7 +57,7 @@ def registered_github() -> Iterator[dict]:
     """
     response = _register(
         "github",
-        {"oauth_credentials": {"issuer": "https://github.com", "scopes": ["repo", "read:user"]}},
+        {"oauth_credentials": {"issuer": "https://github.com/login/oauth", "scopes": ["repo", "read:user"]}},
     )
     if response.status_code == 404:
         pytest.skip(f"catalog 'github' entry unavailable: {response.text}")
@@ -101,7 +101,7 @@ def test_oauth_credentials_persist_as_oauth_config(registered_github: dict) -> N
     assert gateway["enabled"] is False
     assert gateway["authType"] == "oauth"
     oauth_config = gateway.get("oauthConfig") or {}
-    assert oauth_config.get("issuer") == "https://github.com"
+    assert oauth_config.get("issuer") == "https://github.com/login/oauth"
     assert oauth_config.get("scopes") == ["repo", "read:user"]
     assert "client_secret" not in oauth_config
 

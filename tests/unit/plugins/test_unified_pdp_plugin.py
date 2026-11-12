@@ -13,6 +13,7 @@ from plugins.unified_pdp.unified_pdp import UnifiedPDPPlugin
 from plugins.unified_pdp.pdp_models import AccessDecision, Decision, EngineDecision, EngineType
 from cpex.framework.hooks.tools import ToolPreInvokePayload
 from cpex.framework.hooks.resources import ResourcePreFetchPayload
+from cpex.framework import HttpAuthCheckPermissionPayload
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal fakes for the framework types
@@ -221,6 +222,23 @@ class TestUnifiedPDPPlugin:
         assert resource.type == "tool"
         assert resource.id == "my-tool"
 
+    # --- Resource extraction: virtual server and gateway ---
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("virtual_server_id", "expected_server"), [("vs-1", "vs-1"), (None, "gateway-1")])
+    async def test_tool_resource_server_is_the_virtual_server_else_the_gateway(self, virtual_server_id, expected_server):
+        plugin = self._plugin()
+        plugin._pdp.check_access = AsyncMock(return_value=_allow_decision())
+
+        ctx = _make_context()
+        ctx.global_context.server_id = "gateway-1"
+        ctx.global_context.metadata = {"virtual_server_id": virtual_server_id}
+        await plugin.tool_pre_invoke(ToolPreInvokePayload(name="my-tool", args={}, headers={}), ctx)
+
+        resource = plugin._pdp.check_access.call_args[0][2]
+        assert resource.server == expected_server
+        assert resource.annotations["gateway"] == "gateway-1"
+
     # --- Resource extraction: resource hook sets type=resource ---
 
     @pytest.mark.asyncio
@@ -268,3 +286,74 @@ class TestUnifiedPDPPlugin:
         await plugin.shutdown()
 
         plugin._pdp.close.assert_awaited_once()
+
+    # --- http_auth_check_permission ---
+
+    @staticmethod
+    def _permission_payload(permission="servers.update", is_admin=False):
+        return HttpAuthCheckPermissionPayload(user_email="bob@example.com", permission=permission, is_admin=is_admin, client_host="10.0.0.1", user_agent="ua")
+
+    @pytest.mark.asyncio
+    async def test_http_auth_check_permission_allow_grants(self):
+        plugin = self._plugin()
+        plugin._pdp.check_access = AsyncMock(return_value=_allow_decision())
+
+        result = await plugin.http_auth_check_permission(self._permission_payload(), _make_context())
+
+        assert result.modified_payload.granted is True
+        assert result.violation is None
+
+    @pytest.mark.asyncio
+    async def test_http_auth_check_permission_deny_refuses(self):
+        plugin = self._plugin()
+        plugin._pdp.check_access = AsyncMock(return_value=_deny_decision())
+
+        result = await plugin.http_auth_check_permission(self._permission_payload(), _make_context())
+
+        assert result.modified_payload.granted is False
+        assert result.modified_payload.reason == "access denied by policy"
+
+    @pytest.mark.asyncio
+    async def test_http_auth_check_permission_request_names_permission_target_and_caller(self):
+        plugin = self._plugin()
+        plugin._pdp.check_access = AsyncMock(return_value=_allow_decision())
+
+        # The global context's user is someone else: the payload is the caller.
+        ctx = _make_context()
+        ctx.global_context.metadata = {"resource_id": "vs-1"}
+        await plugin.http_auth_check_permission(self._permission_payload(is_admin=True), ctx)
+
+        subject, action, resource, pdp_context = plugin._pdp.check_access.call_args[0]
+        assert subject.email == "bob@example.com"
+        assert subject.attributes == {"is_admin": True}
+        assert action == "servers.update"
+        assert resource.type == "permission_check"
+        assert resource.id == "servers.update"
+        assert resource.annotations == {"target": "vs-1"}
+        assert pdp_context.ip == "10.0.0.1"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("metadata", [{}, {"resource_id": None}, None])
+    async def test_http_auth_check_permission_without_target_has_no_target(self, metadata):
+        plugin = self._plugin()
+        plugin._pdp.check_access = AsyncMock(return_value=_allow_decision())
+
+        ctx = _make_context()
+        ctx.global_context.metadata = metadata
+        await plugin.http_auth_check_permission(self._permission_payload("servers.create"), ctx)
+
+        resource = plugin._pdp.check_access.call_args[0][2]
+        assert resource.annotations == {}
+
+    @pytest.mark.asyncio
+    # No native rules denies everything.
+    @pytest.mark.parametrize(("rules", "granted"), [([{"subject_role": "*", "action": "*", "resource": "*", "effect": "allow"}], True), ([], False)])
+    async def test_http_auth_check_permission_uses_the_configured_engines(self, rules, granted):
+        engines = [{"name": "native", "enabled": True, "priority": 1, "settings": {"rules": rules}}]
+        plugin = UnifiedPDPPlugin(_make_plugin_config(engines))
+
+        ctx = _make_context()
+        ctx.global_context.metadata = {}
+        result = await plugin.http_auth_check_permission(self._permission_payload("gateways.create"), ctx)
+
+        assert result.modified_payload.granted is granted

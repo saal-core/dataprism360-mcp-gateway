@@ -3362,11 +3362,11 @@ class TestRPCEndpoints:
             "params": {"name": "test_tool", "server_id": "server-1", "arguments": {"param": "value"}},
         }
 
-        async def _has_permission(_self, permission, **kwargs):
+        async def _policy_manager_decision(_user, permission, **kwargs):
             return permission != "tools.execute"
 
         with (
-            patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission),
+            patch("mcpgateway.main.plugin_permission_decision", new=_policy_manager_decision),
             patch("mcpgateway.main.server_service.ensure_server_access", new_callable=AsyncMock) as ensure_server_access,
             patch("mcpgateway.main._maybe_forward_affinitized_rpc_request", new_callable=AsyncMock) as forward_request,
             patch("mcpgateway.main._execute_rpc_tools_call", new_callable=AsyncMock) as execute_call,
@@ -3384,10 +3384,10 @@ class TestRPCEndpoints:
     def test_rpc_legacy_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {"jsonrpc": "2.0", "id": "test-id-legacy-deny", "method": "legacy_tool", "params": {"param": "value"}}
 
-        async def _has_permission(_self, permission, **kwargs):
+        async def _policy_manager_decision(_user, permission, **kwargs):
             return permission != "tools.execute"
 
-        with patch("mcpgateway.main.PermissionChecker.has_permission", new=_has_permission):
+        with patch("mcpgateway.main.plugin_permission_decision", new=_policy_manager_decision):
             response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
@@ -3837,7 +3837,7 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["roots"][0]["uri"] == "root://1"
 
-    @patch("mcpgateway.main.PermissionChecker.has_permission", new_callable=AsyncMock, return_value=False)
+    @patch("mcpgateway.main.plugin_permission_decision", new_callable=AsyncMock, return_value=False)
     def test_rpc_list_roots_requires_admin_permission(self, _mock_permission, test_client, auth_headers):
         """list_roots RPC must enforce admin.system_config permission."""
         req = {
@@ -4140,7 +4140,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         assert response.json()["result"]["roots"][0]["uri"] == "root://2"
 
-    @patch("mcpgateway.main.PermissionChecker.has_permission", new_callable=AsyncMock, return_value=False)
+    @patch("mcpgateway.main.plugin_permission_decision", new_callable=AsyncMock, return_value=False)
     def test_rpc_roots_list_requires_admin_permission(self, _mock_permission, test_client, auth_headers):
         """roots/list RPC must enforce admin.system_config permission."""
         req = {"jsonrpc": "2.0", "id": "test-id", "method": "roots/list", "params": {}}

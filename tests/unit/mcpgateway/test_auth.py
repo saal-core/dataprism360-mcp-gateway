@@ -5205,6 +5205,100 @@ class TestVerifyOauthAccessToken:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_keycloak_access_token_with_nonce_accepted(self):
+        """A Keycloak access token (claim ``typ: Bearer``) with ``nonce`` is accepted.
+
+        Keycloak copies ``nonce`` into access tokens from browser logins.
+        """
+        private_key, public_key = self._generate_rsa_keypair()
+        access_token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "email": "user@example.com",
+                "aud": "my-client",
+                "typ": "Bearer",
+                "nonce": "abc-123",
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(access_token, [self.ISSUER], expected_audience="my-client")
+
+        assert result is not None
+        assert result["sub"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_keycloak_id_token_with_nonce_rejected(self):
+        """A Keycloak ID token (claim ``typ: ID``) with ``nonce`` is rejected."""
+        private_key, public_key = self._generate_rsa_keypair()
+        id_token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "aud": "my-client",
+                "typ": "ID",
+                "nonce": "abc-123",
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(id_token, [self.ISSUER], expected_audience="my-client")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_typ_bearer_with_at_hash_rejected(self):
+        """Claim ``typ: Bearer`` does not exempt a token that carries ``at_hash``."""
+        private_key, public_key = self._generate_rsa_keypair()
+        id_token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "aud": "my-client",
+                "typ": "Bearer",
+                "nonce": "abc-123",
+                "at_hash": "xxxx",
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(id_token, [self.ISSUER], expected_audience="my-client")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_keycloak_access_token_with_nonce_wrong_audience_rejected(self):
+        """The ``nonce`` exemption keeps the audience check: a wrong ``aud`` is rejected."""
+        private_key, public_key = self._generate_rsa_keypair()
+        access_token = self._sign_token(
+            {
+                "iss": self.ISSUER,
+                "sub": "user@example.com",
+                "aud": "other-client",
+                "typ": "Bearer",
+                "nonce": "abc-123",
+                "exp": 9999999999,
+                "iat": 1700000000,
+            },
+            private_key,
+        )
+
+        with self._mock_discovery_and_jwks(public_key):
+            result = await verify_oauth_access_token(access_token, [self.ISSUER], expected_audience="my-client")
+
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_access_token_without_id_claims_accepted(self):
         """A token lacking nonce/at_hash is still accepted (regression guard)."""
         private_key, public_key = self._generate_rsa_keypair()

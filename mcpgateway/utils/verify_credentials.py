@@ -2037,7 +2037,13 @@ async def verify_oauth_access_token(
     # token marker but not required, so we do not key the decision on it —
     # rejecting on its absence would break providers and PyJWT's default
     # ``typ: JWT`` header which is used by many test/fake signers.
-    id_token_markers = [claim for claim in ("nonce", "at_hash") if claim in unverified]
+    #
+    # Keycloak also copies ``nonce`` into access tokens from browser (keycloak-js)
+    # logins. Keycloak marks the token kind in the ``typ`` claim: ``Bearer`` for
+    # access tokens, ``ID`` for ID tokens. ``nonce`` alone does not reject a
+    # ``typ: Bearer`` token. ``at_hash`` always rejects.
+    is_keycloak_access_token = str(unverified.get("typ", "")).lower() == "bearer"
+    id_token_markers = [claim for claim in ("nonce", "at_hash") if claim in unverified and not (claim == "nonce" and is_keycloak_access_token)]
     if id_token_markers:
         logger.warning(
             "Rejecting OIDC ID token masquerading as OAuth access token (issuer=%s, claims=%s)",

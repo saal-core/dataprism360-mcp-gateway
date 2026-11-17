@@ -2125,22 +2125,16 @@ class SSOService:
             logger.warning("SSO authenticate_or_create_user: email is empty after normalization from provider '%s'.", user_info.get("provider", "unknown"))
             return None
 
-        incoming_provider = str(user_info.get("provider", "sso")).strip().lower() or "sso"
-        provider = self.get_provider(incoming_provider)
-
-        # An IdP that does not verify emails itself (e.g. an enterprise Keycloak realm
-        # whose users are provisioned by administrators) can opt out per provider with
-        # provider_metadata.skip_email_verified_check = true. Every other provider keeps
-        # the strict check.
-        provider_metadata = getattr(provider, "provider_metadata", None) if provider else None
-        skip_email_verified_check = isinstance(provider_metadata, dict) and provider_metadata.get("skip_email_verified_check") is True
-        if not skip_email_verified_check and not self._is_email_verified_claim(user_info):
+        if not self._is_email_verified_claim(user_info):
             logger.warning(
                 "SSO authenticate_or_create_user: unverified email claim for provider '%s' and email '%s'.",
                 user_info.get("provider", "unknown"),
                 email,
             )
             return None
+
+        incoming_provider = str(user_info.get("provider", "sso")).strip().lower() or "sso"
+        provider = self.get_provider(incoming_provider)
 
         # Enforce trusted-domain policy consistently for both existing and new users.
         trusted_domains = getattr(provider, "trusted_domains", None) if provider else None

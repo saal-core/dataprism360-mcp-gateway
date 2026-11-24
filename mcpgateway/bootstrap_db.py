@@ -673,11 +673,12 @@ def normalize_team_visibility(conn: Connection) -> int:
 
 
 async def bootstrap_resource_assignments(conn: Connection) -> None:
-    """Assign orphaned resources to the platform admin's personal team.
+    """Assign ownerless resources to the platform admin's personal team.
 
     This ensures existing resources (from pre-multitenancy versions) are
     visible in the new team-based UI by assigning them to the admin's
-    personal team with public visibility.
+    personal team with public visibility. A resource that has an owner but
+    no team keeps its owner.
 
     Args:
         conn: Active SQLAlchemy connection
@@ -731,8 +732,9 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
 
             for resource_name, resource_model in resource_types:
                 try:
-                    # Find unassigned resources
-                    unassigned = db.query(resource_model).filter((resource_model.team_id.is_(None)) | (resource_model.owner_email.is_(None)) | (resource_model.visibility.is_(None))).all()
+                    # Only ownerless resources: a team-less resource with an owner keeps it,
+                    # or every restart would take it from its creator (who can then no longer delete it).
+                    unassigned = db.query(resource_model).filter(resource_model.owner_email.is_(None)).all()
 
                     if not unassigned:
                         continue

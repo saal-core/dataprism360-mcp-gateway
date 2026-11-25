@@ -36,7 +36,7 @@ export function openModal(modalId) {
 
     console.log(`✓ Opened modal: ${modalId}`);
   } catch (error) {
-    console.error(`Error opening modal ${modalId}:`, error);
+    console.error("Error opening modal %s:", modalId, error);
   }
 }
 
@@ -72,7 +72,7 @@ export function closeModal(modalId, clearId = null) {
         resetEditSelections();
       }
     } catch (cleanupError) {
-      console.error(`Error during ${modalId} cleanup:`, cleanupError);
+      console.error("Error during %s cleanup:", modalId, cleanupError);
     }
 
     // Always executes — modal hides even if cleanup failed
@@ -81,7 +81,7 @@ export function closeModal(modalId, clearId = null) {
 
     console.log(`✓ Closed modal: ${modalId}`);
   } catch (error) {
-    console.error(`Error closing modal ${modalId}:`, error);
+    console.error("Error closing modal %s:", modalId, error);
   }
 }
 
@@ -126,7 +126,7 @@ export function resetModalState(modalId) {
 
     console.log(`✓ Reset modal state: ${modalId}`);
   } catch (error) {
-    console.error(`Error resetting modal state ${modalId}:`, error);
+    console.error("Error resetting modal state %s:", modalId, error);
   }
 }
 

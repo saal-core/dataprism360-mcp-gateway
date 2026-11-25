@@ -154,7 +154,7 @@ export const initializeCodeMirrorEditors = function () {
         });
         console.log(`✓ Initialized ${config.varName}`);
       } catch (error) {
-        console.error(`Failed to initialize ${config.varName}:`, error);
+        console.error("Failed to initialize %s:", config.varName, error);
       }
     } else {
       console.warn(
@@ -1723,7 +1723,7 @@ export const registerReloadAllResourceSections = function () {
         // After replacement, re-run local initializers so the new DOM behaves like initial load
         reinitializeSection(sectionEl, section);
       } catch (err) {
-        console.error(`Failed to load section ${section} from server:`, err);
+        console.error("Failed to load section %s from server:", section, err);
 
         // Restore the original markup exactly as it was on initial load (fallback)
         if (

@@ -105,7 +105,7 @@ export const performUserSearch = async function (
       `[Team ${teamId}] Captured ${Object.keys(selections).length} selections and ${Object.keys(roleSelections).length} role selections`
     );
   } catch (e) {
-    console.error(`[Team ${teamId}] Error capturing selections:`, e);
+    console.error("[Team %s] Error capturing selections:", teamId, e);
   }
 
   // Step 2: Show loading state
@@ -142,7 +142,7 @@ export const performUserSearch = async function (
           '<div class="text-center py-4 text-red-600">Failed to load users</div>';
       }
     } catch (error) {
-      console.error(`[Team ${teamId}] Error loading users:`, error);
+      console.error("[Team %s] Error loading users:", teamId, error);
       container.innerHTML =
         '<div class="text-center py-4 text-red-600">Error loading users</div>';
     }
@@ -240,7 +240,7 @@ export const performUserSearch = async function (
         '<div class="text-center py-4 text-gray-500">No users found</div>';
     }
   } catch (error) {
-    console.error(`[Team ${teamId}] Error searching users:`, error);
+    console.error("[Team %s] Error searching users:", teamId, error);
     container.innerHTML =
       '<div class="text-center py-4 text-red-600">Error searching users</div>';
   }

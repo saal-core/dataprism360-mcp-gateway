@@ -2803,6 +2803,7 @@ describe("cleanupToolTestState - abort error", () => {
 
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("Error cancelling request"),
+      expect.anything(),
       expect.any(Error)
     );
 

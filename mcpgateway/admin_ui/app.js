@@ -32,7 +32,7 @@ import { isAdminUser, safeGetElement } from "./utils.js";
           chart.destroy();
           console.log(`Chart destroyed: ${id}`);
         } catch (e) {
-          console.warn(`Failed to destroy chart ${id}:`, e);
+          console.warn("Failed to destroy chart %s:", id, e);
         }
         this.charts.delete(id);
       }

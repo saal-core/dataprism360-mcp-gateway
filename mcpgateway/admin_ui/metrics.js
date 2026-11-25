@@ -131,7 +131,7 @@ const fetchWithTimeoutAndRetry = async function (
     } catch (error) {
       lastError = error;
 
-      console.warn(`✗ Metrics fetch attempt ${attempt} failed:`, error.message);
+      console.warn("✗ Metrics fetch attempt %s failed:", attempt, error.message);
 
       // Don't retry on certain errors
       if (error.name === "AbortError" && attempt < maxRetries) {

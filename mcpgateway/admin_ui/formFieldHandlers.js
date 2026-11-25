@@ -55,7 +55,7 @@ export const generateSchema = function () {
         }
       }
     } catch (error) {
-      console.error(`Error processing parameter ${i}:`, error);
+      console.error("Error processing parameter %s:", i, error);
     }
   }
 

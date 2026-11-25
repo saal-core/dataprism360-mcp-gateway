@@ -56,7 +56,7 @@ const handleEntityEvent = function (type, event) {
     // console.log(`Received ${type} event [${event.type}]:`, data);
     updateEntityStatus(type, data);
   } catch (err) {
-    console.error(`Error processing ${type} event:`, err);
+    console.error("Error processing %s event:", type, err);
   }
 };
 

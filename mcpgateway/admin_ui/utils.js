@@ -57,7 +57,7 @@ export function createMemoizedInit(fn, debounceMs = 300, name = "Init") {
 
       return Promise.resolve(result);
     } catch (error) {
-      console.error(`❌ Error initializing ${name}:`, error);
+      console.error("❌ Error initializing %s:", name, error);
       // Don't mark as initialized on error, allow retry
       return Promise.reject(error);
     } finally {
@@ -113,7 +113,7 @@ export function safeGetElement(id, suppressWarning = false) {
     }
     return element;
   } catch (error) {
-    console.error(`Error getting element "${id}":`, error);
+    console.error('Error getting element "%s":', id, error);
     return null;
   }
 }
@@ -220,7 +220,7 @@ export async function fetchWithTimeout(
 
 // Enhanced error handler for fetch operations
 export function handleFetchError(error, operation = "operation") {
-  console.error(`Error during ${operation}:`, error);
+  console.error("Error during %s:", operation, error);
 
   if (error.name === "AbortError") {
     return `Request timed out while trying to ${operation}. Please try again.`;

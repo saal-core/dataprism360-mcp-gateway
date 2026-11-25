@@ -466,6 +466,7 @@ describe("initializeRealTimeMonitoring", () => {
 
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining("Error processing"),
+      expect.anything(),
       expect.any(Error)
     );
     consoleSpy.mockRestore();

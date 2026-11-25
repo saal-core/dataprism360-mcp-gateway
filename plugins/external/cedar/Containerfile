@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG UBI=python-312-minimal
+ARG UBI=python-312-minimal:10.3-1795233144
 
 FROM registry.access.redhat.com/ubi10/${UBI} AS builder
 

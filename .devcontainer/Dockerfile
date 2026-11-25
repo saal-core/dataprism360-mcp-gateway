@@ -2,7 +2,7 @@
 FROM python:3.12-slim
 
 # Install Docker CLI (for container management inside devcontainer)
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     docker.io \
     curl \
     git \

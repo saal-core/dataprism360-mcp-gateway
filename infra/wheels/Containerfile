@@ -73,3 +73,9 @@ RUN uv export --frozen --no-emit-project --no-default-groups \
     && PSY=$(grep -A1 '^name = "psycopg-c"' uv.lock | grep version | sed 's/.*"\(.*\)".*/\1/') \
     && python3 -m pip wheel "psycopg[c]==${PSY}" --wheel-dir /wheels \
     && python3 -m pip wheel setuptools wheel --wheel-dir /wheels
+
+# Non-root for image-scanning compliance. This stage is consumed only via
+# `COPY --from=wheels /wheels ...` downstream, so the built wheels (already
+# written above) are unaffected by the user switch. ubi-minimal has no
+# useradd/shadow-utils, so a bare numeric UID is used instead of a named user.
+USER 1001

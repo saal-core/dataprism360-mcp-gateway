@@ -15,18 +15,18 @@ name: security
 # and this workflow's report-only/full-history scans on push/schedule add
 # coverage pre-commit's PR-diff-only hooks don't.
 #
-# - pull_request into main: blocks only on what the PR itself introduces
+# - pull_request into develop: blocks only on what the PR itself introduces
 #   (new Semgrep findings of any severity, secrets in the PR's commits, HIGH/
 #   CRITICAL IaC issues, vulnerable dependencies, fixable HIGH/CRITICAL CVEs
 #   in the built image). Old findings never block a PR.
-# - push to main and the weekly schedule: full scans, report-only for
-#   Semgrep/gitleaks/base images, with a table in the run summary and the
-#   JSON/SARIF reports as artifacts.
+# - push to develop/main and the weekly schedule: full scans, report-only
+#   for Semgrep/gitleaks/base images, with a table in the run summary and
+#   the JSON/SARIF reports as artifacts.
 on:
   pull_request:
-    branches: [main]
+    branches: [develop]
   push:
-    branches: [main]
+    branches: [develop, main]
   schedule:
     - cron: '0 3 * * 1'  # Mondays 03:00 UTC
   workflow_dispatch:

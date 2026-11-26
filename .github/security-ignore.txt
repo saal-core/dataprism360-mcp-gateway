@@ -1,0 +1,26 @@
+# Vulnerabilities CI may skip: read by pip-audit (.github/pip-audit.sh) and
+# Trivy (.github/workflows/security.yml). One ID per line, then "#" and why it
+# is accepted. Remove an entry once it is fixed.
+
+# Accepted temporarily pending a dependency bump review (PR #7); bumping now
+# risks breaking existing behavior, so these are deferred rather than fixed.
+PYSEC-2026-4357  # authlib: fix available (1.9.0), deferred pending upgrade review
+PYSEC-2026-4359  # authlib: fix available (1.9.0), deferred pending upgrade review
+PYSEC-2026-4358  # authlib: fix available (1.9.0), deferred pending upgrade review
+PYSEC-2026-4355  # authlib: fix available (1.9.0), deferred pending upgrade review
+PYSEC-2026-4360  # authlib: fix available (1.9.0), deferred pending upgrade review
+PYSEC-2026-4356  # authlib: fix available (1.9.1), deferred pending upgrade review
+CVE-2026-96760   # authlib: fix available (1.9.0), deferred pending upgrade review
+CVE-2026-116672  # authlib: fix available (1.9.1), deferred pending upgrade review
+CVE-2026-128089  # dnspython: fix available (2.9.2), deferred pending upgrade review
+CVE-2026-119284  # joserfc: fix available (1.7.6), deferred pending upgrade review
+CVE-2026-49272   # oauthlib: fix available (4.0.1), deferred pending upgrade review
+CVE-2026-126360  # opentelemetry-api: fix available (1.45.2), deferred pending upgrade review
+CVE-2026-119196  # pyasn1: fix available (0.6.5), deferred pending upgrade review
+CVE-2026-119194  # pyasn1: fix available (0.6.5), deferred pending upgrade review
+CVE-2026-119197  # pyasn1: fix available (0.6.5), deferred pending upgrade review
+CVE-2026-119195  # pyasn1: fix available (0.6.5), deferred pending upgrade review
+CVE-2026-116577  # tornado: fix available (6.6), deferred pending upgrade review
+CVE-2026-115927  # tornado: fix available (6.6), deferred pending upgrade review
+CVE-2026-116578  # tornado: fix available (6.6), deferred pending upgrade review
+CVE-2026-126347  # tornado: fix available (6.6.1), deferred pending upgrade review

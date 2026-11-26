@@ -1,0 +1,17 @@
+# Misconfigurations accepted for now (CI: .github/workflows/security.yml,
+# "IaC" job). One ID per line, then "#" and why. Remove an entry once fixed
+# (or never, if it's a documented false positive).
+
+# Root-user Dockerfiles: accepted temporarily pending review (PR #7) to avoid
+# changing runtime users without validating each image separately.
+DS-0002
+
+# .devcontainer/Dockerfile: apt-get without --no-install-recommends; a
+# dev-only image, not shipped, accepted temporarily pending review (PR #7).
+DS-0029
+
+# False positive: the key name "ENABLE_HEADER_PASSTHROUGH" in
+# charts/mcp-stack/templates/configmap-gateway.yaml matches trivy's
+# secret-like-key-name heuristic, but it holds a boolean feature flag, not a
+# secret value.
+KSV-0109

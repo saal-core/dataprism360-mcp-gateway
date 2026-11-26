@@ -912,8 +912,7 @@ class ContentSecurityService:
             from jinja2 import Environment, meta
 
             # Environment used only for parsing/validation, never for rendering.
-            # nosemgrep: python.flask.security.xss.audit.direct-use-of-jinja2
-            env = Environment(autoescape=True)
+            env = Environment(autoescape=True)  # nosemgrep: python.flask.security.xss.audit.direct-use-of-jinja2.direct-use-of-jinja2
             ast = env.parse(template)
             # Find undeclared variables (does not validate filters)
             meta.find_undeclared_variables(ast)

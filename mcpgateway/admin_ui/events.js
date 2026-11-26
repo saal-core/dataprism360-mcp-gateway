@@ -553,7 +553,7 @@ import {
               );
             } catch (e) {
               console.error(
-                `[Team ${teamId}] Failed to parse team member data:`,
+                "[Team %s] Failed to parse team member data:", teamId,
                 e
               );
               teamMemberDataCache[teamId] = {};

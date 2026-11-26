@@ -35,7 +35,7 @@ brotlicffi = "2026-10-27T23:59:59Z"
 filelock = "2026-10-27T23:59:59Z"
 setuptools = "2026-10-27T23:59:59Z"
 virtualenv = "2026-10-27T23:59:59Z"
-opentelemetry-api = "2026-10-27T23:59:59Z"
+opentelemetry-api = "2026-10-29T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -241,7 +241,7 @@ llmchat = [
     "langchain-core<=1.5.1",
     "langchain-ollama>=1.1.0",
     "langchain-openai<=1.4.1",
-    "langgraph<=1.2.12",
+    "langgraph<=1.2.14",
     "langsmith>=0.10.10", # Transitive pin (langchain-core)
 ]
 

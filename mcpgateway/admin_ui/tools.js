@@ -1579,7 +1579,7 @@ export const testTool = async function (toolId) {
     }
 
     const tool = await response.json();
-    console.log(`Tool ${toolId} fetched successfully`, tool);
+    console.log("Tool %s fetched successfully", toolId, tool);
 
     // 7. CLEAN STATE before proceeding
     toolTestState.activeRequests.delete(toolId);
@@ -2060,7 +2060,7 @@ export const enrichTool = async function (toolId) {
       enrichButton.textContent = "Enrich";
       enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
     }
-    console.log(`Tool ${toolId} enriched successfully`, data);
+    console.log("Tool %s enriched successfully", toolId, data);
     // showSuccessMessage(`Tool ${toolId} enriched successfully`);
 
     const newDesc = safeGetElement("view-new-description");
@@ -2322,7 +2322,7 @@ export const validateTool = async function (toolId) {
       }
     }
     const tool = await response.json();
-    console.log(`Tool ${toolId} fetched successfully`, tool);
+    console.log("Tool %s fetched successfully", toolId, tool);
 
     // 7. CLEAN STATE before proceeding
     toolTestState.activeRequests.delete(toolId);
@@ -2980,7 +2980,7 @@ export const runToolValidation = async function (testIndex) {
             }
             params[keyValidation.value] = value;
           } catch (error) {
-            console.error(`Error parsing array values for ${key}:`, error);
+            console.error("Error parsing array values for %s:", key, error);
             showErrorMessage(
               `Invalid input format for ${key}. Please check the values are in correct format.`
             );
@@ -3393,7 +3393,7 @@ export const runToolTest = async function () {
             }
             params[keyValidation.value] = value;
           } catch (error) {
-            console.error(`Error parsing array values for ${key}:`, error);
+            console.error("Error parsing array values for %s:", key, error);
             showErrorMessage(
               `Invalid input format for ${key}. Please check the values are in correct format.`
             );
@@ -3419,7 +3419,7 @@ export const runToolTest = async function () {
             try {
               params[keyValidation.value] = parseObjectFieldValue(prop, value, key);
             } catch (error) {
-              console.error(`Error parsing object value for ${key}:`, error);
+              console.error("Error parsing object value for %s:", key, error);
               showErrorMessage(error.message);
               throw error;
             }
@@ -3557,7 +3557,7 @@ export const cleanupToolTestState = function () {
       controller.abort();
       console.log(`Cancelled request for tool ${toolId}`);
     } catch (error) {
-      console.warn(`Error cancelling request for tool ${toolId}:`, error);
+      console.warn("Error cancelling request for tool %s:", toolId, error);
     }
   }
 

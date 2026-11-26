@@ -66,7 +66,7 @@ export async function loadFeature(featureName) {
       loadedModules.add(featureName);
       console.log(`✅ Loaded feature: ${featureName}`);
     } catch (error) {
-      console.error(`❌ Failed to load feature ${featureName}:`, error);
+      console.error("❌ Failed to load feature %s:", featureName, error);
       throw error;
     } finally {
       loadingPromises.delete(featureName);

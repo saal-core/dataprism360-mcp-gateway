@@ -431,7 +431,7 @@ export const showTab = function (tabName) {
             await loadFeature(featureName);
             hideTabLoadingIndicator(tabName);
           } catch (error) {
-            console.error(`Failed to load feature for tab ${tabName}:`, error);
+            console.error("Failed to load feature for tab %s:", tabName, error);
             hideTabLoadingIndicator(tabName);
             showErrorMessage(`Failed to load ${tabName} features`);
             return;
@@ -821,13 +821,13 @@ export const showTab = function (tabName) {
           }
         }
       } catch (error) {
-        console.error(`Error in tab ${tabName} content loading:`, error);
+        console.error("Error in tab %s content loading:", tabName, error);
       }
     }, 300); // 300ms debounce
 
     console.log(`✓ Successfully switched to tab: ${tabName}`);
   } catch (error) {
-    console.error(`Error switching to tab ${tabName}:`, error);
+    console.error("Error switching to tab %s:", tabName, error);
     showErrorMessage(`Failed to switch to ${tabName} tab`);
   }
 };

@@ -233,7 +233,8 @@ def resource_namespacing_upstreams():
             app.resource(uri, name="Shared Report")(make_reader(content))
             app.resource(f"{uri}/long", name=long_name)(make_reader(content))
             listener = socket.socket()
-            listener.bind(("0.0.0.0", 0))
+            bind_host = "127.0.0.1" if host in {"localhost", "127.0.0.1"} else "0.0.0.0"
+            listener.bind((bind_host, 0))
             port = listener.getsockname()[1]
             server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
             thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
@@ -382,7 +383,8 @@ def tool_error_upstream() -> Generator[str, None, None]:
         raise RuntimeError("upstream exploded")
 
     listener = socket.socket()
-    listener.bind(("0.0.0.0", 0))
+    bind_host = "127.0.0.1" if host in {"localhost", "127.0.0.1"} else "0.0.0.0"
+    listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
     server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
@@ -422,7 +424,8 @@ def repeating_pagination_upstream(request):
         options["on_list_prompts"] = list_prompts
     app = Server("repeating-pagination", **options)
     listener = socket.socket()
-    listener.bind(("0.0.0.0", 0))
+    bind_host = "127.0.0.1" if host in {"localhost", "127.0.0.1"} else "0.0.0.0"
+    listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
     server = uvicorn.Server(
         uvicorn.Config(
@@ -506,7 +509,8 @@ def prompt_error_upstream() -> Generator[str, None, None]:
         raise McpError(code=-32001, message="Custom upstream failure", data={"hint": "retry later"})
 
     listener = socket.socket()
-    listener.bind(("0.0.0.0", 0))
+    bind_host = "127.0.0.1" if host in {"localhost", "127.0.0.1"} else "0.0.0.0"
+    listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
     server = uvicorn.Server(uvicorn.Config(app.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True), log_level="error"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
@@ -538,7 +542,8 @@ def array_upstream() -> Generator[str, None, None]:
 
     app = Starlette(routes=[Route("/numbers", numbers)])
     listener = socket.socket()
-    listener.bind(("0.0.0.0", 0))
+    bind_host = "127.0.0.1" if host in {"localhost", "127.0.0.1"} else "0.0.0.0"
+    listener.bind((bind_host, 0))
     port = listener.getsockname()[1]
     server = uvicorn.Server(uvicorn.Config(app, log_level="error"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)

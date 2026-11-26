@@ -911,9 +911,8 @@ class ContentSecurityService:
             # Third-Party
             from jinja2 import Environment, meta
 
-            # nosec B701: Environment used only for parsing/validation, not rendering
-            # Templates are never rendered with this Environment, so autoescape is not needed
-            env = Environment()  # nosec B701
+            # Environment used only for parsing/validation, never for rendering.
+            env = Environment(autoescape=True)  # nosemgrep: python.flask.security.xss.audit.direct-use-of-jinja2.direct-use-of-jinja2
             ast = env.parse(template)
             # Find undeclared variables (does not validate filters)
             meta.find_undeclared_variables(ast)

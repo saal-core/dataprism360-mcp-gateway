@@ -1440,7 +1440,7 @@ export const sendChatMessage = async function (event) {
                 break;
             }
           } catch (eventError) {
-            console.error(`Error handling event ${eventType}:`, eventError);
+            console.error("Error handling event %s:", eventType, eventError);
             // Continue processing other events
           }
         }

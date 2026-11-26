@@ -461,7 +461,7 @@ describe("performUserSearch - comprehensive edge cases", () => {
       json: () => Promise.resolve({ users: [] }),
     });
     await performUserSearch("team-1", "test", faultyContainer, {});
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Error capturing selections"), expect.any(Error));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("Error capturing selections"), "team-1", expect.any(Error));
     consoleSpy.mockRestore();
   });
 

@@ -638,7 +638,7 @@ export const handleA2AFormSubmit = async function (e) {
     // Debug: Log all form data being sent
     console.log("=== A2A Form Data Being Sent ===");
     for (const [key, value] of formData.entries()) {
-      console.log(`${key}:`, value);
+      console.log("%s:", key, value);
     }
     console.log("=================================");
 

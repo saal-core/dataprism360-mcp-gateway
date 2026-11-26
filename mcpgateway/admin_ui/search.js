@@ -575,7 +575,7 @@ export const serverSideSearch = async function (config, searchTerm) {
             }
           }
         } catch (e) {
-          console.error(`Error restoring ${config.type} checked state:`, e);
+          console.error("Error restoring %s checked state:", config.type, e);
         }
 
         config.initSelector(
@@ -590,7 +590,7 @@ export const serverSideSearch = async function (config, searchTerm) {
         container.innerHTML = `<div class="text-center py-4 text-red-600">Failed to load ${config.type}</div>`;
       }
     } catch (error) {
-      console.error(`Error loading ${config.type}:`, error);
+      console.error("Error loading %s:", config.type, error);
       container.innerHTML = `<div class="text-center py-4 text-red-600">Error loading ${config.type}</div>`;
     }
     return;
@@ -705,7 +705,7 @@ export const serverSideSearch = async function (config, searchTerm) {
           }
         }
       } catch (e) {
-        console.error(`Error restoring ${config.type} checked state:`, e);
+        console.error("Error restoring %s checked state:", config.type, e);
       }
 
       config.initSelector(
@@ -731,7 +731,7 @@ export const serverSideSearch = async function (config, searchTerm) {
       }
     }
   } catch (error) {
-    console.error(`Error searching ${config.type}:`, error);
+    console.error("Error searching %s:", config.type, error);
     container.innerHTML = `<div class="text-center py-4 text-red-600">Error searching ${config.type}</div>`;
     if (noResultsMessage) {
       noResultsMessage.style.display = "none";

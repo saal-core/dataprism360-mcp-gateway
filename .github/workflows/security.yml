@@ -1,0 +1,319 @@
+name: security
+
+# At least the scans of the external security report: SAST, secrets, IaC,
+# dependencies (SCA), the built image and every referenced base image.
+#
+# Some of these overlap other required workflows, which keep gating PRs on
+# their own schedule independently of this one:
+# - SAST here (semgrep) is in addition to bandit, which already runs as a
+#   pre-commit hook in pre-commit.yml.
+# - Secrets here (gitleaks) is in addition to detect-secrets, which already
+#   runs as a pre-commit hook in pre-commit.yml.
+# - Container/base-images here (trivy) is in addition to the Grype + SBOM
+#   scan in docker-scan.yml.
+# Running both tools is intentional: each catches things the other does not,
+# and this workflow's report-only/full-history scans on push/schedule add
+# coverage pre-commit's PR-diff-only hooks don't.
+#
+# - pull_request into main: blocks only on what the PR itself introduces
+#   (new Semgrep findings of any severity, secrets in the PR's commits, HIGH/
+#   CRITICAL IaC issues, vulnerable dependencies, fixable HIGH/CRITICAL CVEs
+#   in the built image). Old findings never block a PR.
+# - push to main and the weekly schedule: full scans, report-only for
+#   Semgrep/gitleaks/base images, with a table in the run summary and the
+#   JSON/SARIF reports as artifacts.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * 1'  # Mondays 03:00 UTC
+  workflow_dispatch:
+
+# A new push to the same PR supersedes the previous run.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sast:
+    name: SAST (semgrep)
+    runs-on: ubuntu-latest
+    env:
+      SEMGREP_RULES: >-
+        p/default p/security-audit p/owasp-top-ten p/cwe-top-25 p/python
+        p/javascript p/typescript p/secrets p/github-actions
+        r/python.sqlalchemy p/jwt p/dockerfile
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Install semgrep
+        run: pip install semgrep==1.180.0
+
+      # PR: fails on any finding, of any severity, that is not already on the
+      # base branch. Fix it or, for a false positive, add
+      # `# nosemgrep: <rule-id> -- <reason>` on the line.
+      - name: Scan new code (PR)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          base="$(git merge-base "origin/$BASE_REF" HEAD)"
+          echo "Reporting only findings introduced after $base"
+          semgrep scan --baseline-commit "$base" --error --metrics=off --timeout 30 .
+
+      # Push / schedule: every finding, report-only.
+      - name: Scan everything (report)
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p "$RUNNER_TEMP/reports"
+          semgrep scan --metrics=off --timeout 30 \
+            --json-output="$RUNNER_TEMP/reports/semgrep.json" \
+            --sarif-output="$RUNNER_TEMP/reports/semgrep.sarif" .
+          python3 .github/security-summary.py semgrep "$RUNNER_TEMP/reports/semgrep.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: semgrep-report
+          path: ${{ runner.temp }}/reports/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: .github/install-security-tool.sh gitleaks
+
+      # PR: only the PR's own commits; any secret fails. Values are always
+      # redacted. A verified fake test value goes in .gitleaks.toml with a
+      # reason; a real one must be rotated, not allowlisted.
+      - name: Scan PR commits
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          base="$(git merge-base "origin/$BASE_REF" HEAD)"
+          gitleaks git --config .gitleaks.toml --redact --no-banner --verbose \
+            --log-opts="$base..HEAD" --exit-code 1 .
+
+      # Push / schedule: the whole history, report-only.
+      - name: Scan full history (report)
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p "$RUNNER_TEMP/reports"
+          gitleaks git --config .gitleaks.toml --redact --no-banner --exit-code 0 \
+            --report-format json --report-path "$RUNNER_TEMP/reports/gitleaks.json" .
+          python3 .github/security-summary.py gitleaks "$RUNNER_TEMP/reports/gitleaks.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gitleaks-report
+          path: ${{ runner.temp }}/reports/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  iac:
+    name: IaC (trivy config)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Install trivy
+        run: .github/install-security-tool.sh trivy
+
+      # Containerfile, infra/nginx/Dockerfile, compose files, charts/. Every
+      # severity is reported; only HIGH/CRITICAL blocks.
+      - name: Scan configuration (report)
+        run: |
+          mkdir -p "$RUNNER_TEMP/reports"
+          trivy config --quiet --format json -o "$RUNNER_TEMP/reports/trivy-config.json" .
+          python3 .github/security-summary.py trivy "$RUNNER_TEMP/reports/trivy-config.json" \
+            "IaC (trivy config)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on HIGH/CRITICAL misconfigurations
+        run: trivy config --quiet --severity HIGH,CRITICAL --exit-code 1 .
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-config-report
+          path: ${{ runner.temp }}/reports/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  dependencies:
+    name: SCA (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install pip-audit
+        run: uv tool install pip-audit==2.10.1
+
+      # Every package in uv.lock at its locked version (prod, dev, all
+      # extras), so transitive dependencies are covered without installing
+      # anything. Accepted vulnerabilities live in .github/security-ignore.txt.
+      - name: Audit locked dependencies
+        run: |
+          uv export --frozen --all-groups --all-extras --no-hashes --no-emit-project \
+            --format requirements-txt -o "$RUNNER_TEMP/locked-requirements.txt"
+          PATH="$(uv tool dir --bin):$PATH" .github/pip-audit.sh \
+            -r "$RUNNER_TEMP/locked-requirements.txt" --no-deps --disable-pip
+
+  container:
+    name: Container (trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Building the image is slow, so on PRs only when it can change.
+      - name: Check for image changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "origin/$BASE_REF...HEAD" \
+              | grep -qE '^(Containerfile|pyproject\.toml|uv\.lock|package\.json|package-lock\.json)$'; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No Containerfile or dependency changes; skipping the image scan."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build image
+        if: steps.changes.outputs.build == 'true'
+        run: docker build -t mcp-context-forge:ci -f Containerfile .
+
+      - name: Install trivy
+        if: steps.changes.outputs.build == 'true'
+        run: .github/install-security-tool.sh trivy
+
+      # Scans the image we ship, not the base image tag, so fixes applied by
+      # the Containerfile count. Every severity, unfixed included, goes in
+      # the report.
+      - name: Scan image (report)
+        if: steps.changes.outputs.build == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/reports"
+          trivy image --quiet --scanners vuln --format json \
+            -o "$RUNNER_TEMP/reports/trivy-image.json" mcp-context-forge:ci
+          python3 .github/security-summary.py trivy "$RUNNER_TEMP/reports/trivy-image.json" \
+            "Built image (all severities, unfixed included)" >> "$GITHUB_STEP_SUMMARY"
+
+      # The gate: HIGH/CRITICAL with a fix available. Unfixed CVEs are
+      # skipped: nothing can be done about them until upstream ships a fix.
+      # Accepted ones live in .github/security-ignore.txt.
+      - name: Fail on fixable HIGH/CRITICAL
+        if: steps.changes.outputs.build == 'true'
+        run: |
+          trivy image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --ignorefile .github/security-ignore.txt --exit-code 1 mcp-context-forge:ci
+
+      - name: Upload report
+        if: always() && steps.changes.outputs.build == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-image-report
+          path: ${{ runner.temp }}/reports/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  base-images:
+    name: Base images (trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # On PRs only when an image reference can change.
+      - name: Check for image reference changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "scan=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "origin/$BASE_REF...HEAD" \
+              | grep -qE '(^|/)(Containerfile|Dockerfile)[^/]*$|^docker-compose[^/]*\.ya?ml$|^\.github/(workflows/|list-images\.py$)'; then
+            echo "scan=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No image references changed; skipping the base image scan."
+            echo "scan=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install trivy
+        if: steps.changes.outputs.scan == 'true'
+        run: .github/install-security-tool.sh trivy
+
+      # Every image in Containerfile/Dockerfile* (FROM/COPY --from),
+      # docker-compose*.yml and the workflows, all severities. Report-only:
+      # most are third-party images we do not ship.
+      - name: Scan referenced images (report)
+        if: steps.changes.outputs.scan == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/reports"
+          python3 .github/list-images.py > "$RUNNER_TEMP/reports/images.txt"
+          echo "## Base images" >> "$GITHUB_STEP_SUMMARY"
+          n=0
+          while read -r image; do
+            n=$((n + 1))
+            out="$RUNNER_TEMP/reports/trivy-base-$n.json"
+            echo "Scanning $image"
+            if trivy image --quiet --scanners vuln --format json -o "$out" "$image"; then
+              python3 .github/security-summary.py trivy "$out" "$image" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::trivy could not scan $image"
+              printf '### %s\nScan failed.\n\n' "$image" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done < "$RUNNER_TEMP/reports/images.txt"
+
+      - name: Upload report
+        if: always() && steps.changes.outputs.scan == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-base-images-report
+          path: ${{ runner.temp }}/reports/
+          if-no-files-found: ignore
+          retention-days: 30

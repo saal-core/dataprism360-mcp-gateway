@@ -1,0 +1,23 @@
+# Paths Semgrep skips (CI: .github/workflows/security.yml).
+#
+# Having this file REPLACES Semgrep's built-in ignore list, which skips
+# tests/ and more. We want tests/ and plugins/ scanned, so only vendored,
+# generated and local-only paths are excluded here. To silence a single
+# false positive, use an inline `# nosemgrep: <rule-id> -- <reason>` instead
+# of adding a path.
+
+# Vendored / generated JS and Python packaging output.
+node_modules/
+*.egg-info/
+
+# Local environments, caches and build output.
+.venv/
+venv/
+build/
+dist/
+reports/
+
+# Local SQLite dev DB and logs, never committed intentionally but present
+# in some checkouts.
+mcp.db
+*.log

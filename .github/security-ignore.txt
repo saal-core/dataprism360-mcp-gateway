@@ -1,0 +1,3 @@
+# Vulnerabilities CI may skip: read by pip-audit (.github/pip-audit.sh) and
+# Trivy (.github/workflows/security.yml). One ID per line, then "#" and why it
+# is accepted. Remove an entry once it is fixed.

@@ -1,0 +1,12 @@
+# gitleaks configuration (CI: .github/workflows/security.yml, "Secrets" job).
+#
+# Default gitleaks rules. Add allowlist entries only for VERIFIED fake test
+# data, pinned to the exact commit(s) AND file it was found in, so a new value
+# added to the same file later is still reported. Never allowlist a value
+# that might be real: rotate it instead.
+#
+# To add one: run `gitleaks git --redact .`, confirm the hit is test data,
+# then add an entry with the commit SHA(s), the path and the reason.
+
+[extend]
+useDefault = true
